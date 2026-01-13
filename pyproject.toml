@@ -7,7 +7,7 @@ name = "claude-vault"
 version = "0.3.0"
 description = "Sync Claude conversations to Obsidian markdown files"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 authors = [
     {name = "Mario Padilla"}
 ]
