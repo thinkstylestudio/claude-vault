@@ -63,7 +63,11 @@ class StateManager:
         return None
 
     def save_conversation(
-        self, uuid: str, file_path: str, content_hash: str, metadata: Dict = None
+        self,
+        uuid: str,
+        file_path: str,
+        content_hash: str,
+        metadata: Optional[Dict] = None,
     ):
         """
         Save or update conversation state

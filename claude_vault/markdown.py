@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import List, Optional
 
 import frontmatter
 
@@ -8,7 +9,7 @@ from .models import Conversation
 class MarkdownGenerator:
     """Generates Obsidian-compatible markdown files from conversations"""
 
-    def __init__(self, template: str = None):
+    def __init__(self, template: Optional[str] = None):
         self.template = template or self._default_template()
 
     def _default_template(self) -> str:
@@ -25,7 +26,9 @@ uuid: {uuid}
 {content}
 """
 
-    def generate(self, conversation: Conversation, related_convs: list = None) -> str:
+    def generate(
+        self, conversation: Conversation, related_convs: Optional[List] = None
+    ) -> str:
         """
         Generate markdown from conversation
 
@@ -77,10 +80,13 @@ uuid: {uuid}
             ]
             post["related_tags"] = {r["title"]: r["common_tags"] for r in related_convs}
 
-        return frontmatter.dumps(post)
+        return str(frontmatter.dumps(post))
 
     def save(
-        self, conversation: Conversation, file_path: Path, related_convs: list = None
+        self,
+        conversation: Conversation,
+        file_path: Path,
+        related_convs: Optional[List] = None,
     ):
         """
         Generate and save markdown file

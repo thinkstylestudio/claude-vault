@@ -1,7 +1,7 @@
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from .models import Conversation, Message
 
@@ -52,7 +52,7 @@ class ClaudeCodeHistoryParser:
 
         return conversations
 
-    def _parse_session_file(self, jsonl_path: Path) -> Conversation:
+    def _parse_session_file(self, jsonl_path: Path) -> Optional[Conversation]:
         """Parse a single session JSONL file"""
 
         entries = []
@@ -139,7 +139,7 @@ class ClaudeCodeHistoryParser:
             tags=self._extract_tags(title, messages, project_path),
         )
 
-    def _parse_message(self, entry: dict) -> Message:
+    def _parse_message(self, entry: dict) -> Optional[Message]:
         """Parse a message from JSONL entry"""
 
         msg_data = entry.get("message", {})
@@ -173,7 +173,7 @@ class ClaudeCodeHistoryParser:
 
         # Handle string content directly
         if isinstance(msg_data.get("content"), str):
-            return msg_data["content"]
+            return str(msg_data["content"])
 
         # Handle array content
         if isinstance(msg_data.get("content"), list):
@@ -214,7 +214,9 @@ class ClaudeCodeHistoryParser:
 
         return datetime.now()
 
-    def _generate_title(self, messages: List[Message], project_path: str = None) -> str:
+    def _generate_title(
+        self, messages: List[Message], project_path: Optional[str] = None
+    ) -> str:
         """Generate title from first user message, avoiding user-specific paths"""
 
         # Get first user message
@@ -249,7 +251,7 @@ class ClaudeCodeHistoryParser:
         return "Code Session"
 
     def _extract_tags(
-        self, title: str, messages: List[Message], project_path: str = None
+        self, title: str, messages: List[Message], project_path: Optional[str] = None
     ) -> List[str]:
         """Extract tags from conversation"""
 

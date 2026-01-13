@@ -3,7 +3,7 @@ import re
 import uuid as uuid_module
 from datetime import datetime
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from .models import Conversation, Message
 
@@ -95,7 +95,7 @@ class ClaudeExportParser:
             uuid=msg_data.get("uuid"),
         )
 
-    def _parse_timestamp(self, timestamp_str: str) -> datetime:
+    def _parse_timestamp(self, timestamp_str: Optional[str]) -> datetime:
         """Parse ISO format timestamp from Claude export"""
         if not timestamp_str:
             return datetime.now()

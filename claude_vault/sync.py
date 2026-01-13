@@ -1,9 +1,10 @@
 import re
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List, Optional, Union
 
 import frontmatter
 
+from .code_parser import ClaudeCodeHistoryParser
 from .markdown import MarkdownGenerator
 from .models import Conversation
 from .parser import ClaudeExportParser
@@ -17,7 +18,9 @@ class SyncEngine:
     def __init__(self, vault_path: Path):
         self.vault_path = vault_path
         self.state = StateManager(vault_path)
-        self.parser = ClaudeExportParser()
+        self.parser: Union[ClaudeExportParser, ClaudeCodeHistoryParser] = (
+            ClaudeExportParser()
+        )
         self.markdown_gen = MarkdownGenerator()
         self.conversations_dir = vault_path / "conversations"
         self.conversations_dir.mkdir(exist_ok=True)
@@ -137,7 +140,7 @@ class SyncEngine:
         filename = f"{date_str}-{safe_title}.md"
         return self.conversations_dir / filename
 
-    def _find_moved_file(self, uuid: str) -> Path:
+    def _find_moved_file(self, uuid: str) -> Optional[Path]:
         """
         Find a file that was moved/renamed by searching for UUID in frontmatter
 
@@ -163,7 +166,7 @@ class SyncEngine:
     ) -> list[Dict]:
         """Find conversations with similar tags"""
 
-        related = []
+        related: List[Dict] = []
         conv_tags = set(conversation.tags)
 
         if not conv_tags:

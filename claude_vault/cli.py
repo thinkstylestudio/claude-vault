@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Union
 
 import frontmatter
 import typer
@@ -112,6 +112,7 @@ def sync(
     console.print(f"[blue]📦 Syncing conversations from {export_path.name}...[/blue]\n")
 
     # Use appropriate parser
+    parser: Union[ClaudeCodeHistoryParser, ClaudeExportParser]
     if source == "code":
         parser = ClaudeCodeHistoryParser()
     else:
