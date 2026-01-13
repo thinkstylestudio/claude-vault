@@ -28,6 +28,16 @@ The JSONL parser handles:
 - ✅ **Summary as title** - Uses the summary line as conversation title
 - ✅ **Code-specific tags** - Adds 'code-session' tag to differentiate from web chats
 
+## How it Works
+
+Claude Vault uses a modular architecture to handle different conversation formats:
+
+1.  **Format Detection**: Automatically identifies if a file is a Web export (`.json`) or Code History (`.jsonl`).
+2.  **Parsing**: specialized parsers (`messages.py` vs `code_parser.py`) extract messages, timestamps, and metadata.
+3.  **Tagging**: If configured, `OfflineTagGenerator` uses a local LLM to analyze the conversation content and generate relevant tags.
+4.  **Syncing**: The `SyncEngine` writes markdown files to your Obsidian vault, updating only what has changed based on content hashing.
+
+
 ### Prerequisites
 
 - **Python 3.8+**
