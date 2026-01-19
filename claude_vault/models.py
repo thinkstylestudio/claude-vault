@@ -24,6 +24,7 @@ class Conversation(BaseModel):
     created_at: datetime
     updated_at: datetime
     tags: List[str] = Field(default_factory=list)
+    summary: Optional[str] = None
 
     def content_hash(self) -> str:
         """Generate SHA-256 hash of conversation content for change detection"""

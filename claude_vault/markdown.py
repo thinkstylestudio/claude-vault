@@ -71,6 +71,8 @@ uuid: {uuid}
         post["date"] = conversation.created_at.isoformat()
         post["updated"] = conversation.updated_at.isoformat()
         post["tags"] = conversation.tags
+        if conversation.summary:
+            post["summary"] = conversation.summary
         post["uuid"] = conversation.id
         post["message_count"] = len(conversation.messages)
         if related_convs:

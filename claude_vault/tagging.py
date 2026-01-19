@@ -23,15 +23,15 @@ class OfflineTagGenerator:
         except Exception:
             return False
 
-    def generate_tags(self, conversation: Conversation) -> List[str]:
+    def generate_metadata(self, conversation: Conversation) -> dict:
         """
-        Generate 3-5 relevant tags for a conversation
+        Generate relevant tags and a brief summary for a conversation
         Uses LLM if available, falls back to keyword extraction
         """
 
         if not self.is_available():
             print("⚠️  Ollama not running. Using keyword extraction fallback.")
-            return self._fallback_tags(conversation)
+            return self._fallback_metadata(conversation)
 
         # Create focused prompt with conversation context
         first_msg = (
@@ -43,26 +43,21 @@ class OfflineTagGenerator:
             else ""
         )
 
-        prompt = f"""You are a tag generator. Analyze this conversation and ONLY generate and output exactly 3-5 relevant tags for categorization.
+        prompt = f"""You are a conversation analyzer. Analyze this conversation and output a JSON object with tags and a summary.
 
         Title: {conversation.title}
         First message: {first_msg}
         Last message: {last_msg}
 
         CRITICAL RULES:
-        - Output format: word1, word2, word3
-        - Use commas to separate tags
-        - No numbers, no hashtags, no bullets
-        - Lowercase only
-        - 3-5 tags maximum
-        - Do NOT include any explanation, only the tags
-        - Tags should be concise (1-3 words each), relevant to the content
-        - Avoid overly generic tags like 'chat', 'conversation', 'general'
-        - Prefer specific technical or topical tags
+        - Output MUST be valid JSON
+        - Format: {{"tags": ["tag1", "tag2"], "summary": "One sentence summary"}}
+        - Tags: 3-5 lowercase tags, no spaces, specific to content
+        - Summary: 1-2 sentence summary of the main topic or insight
+        - No markdown formatting (no ```json code blocks)
 
-        Example correct output: python, export-data, tutorial, json-format
-
-        Your answer should be only the tags comma-separated) without any additional text."""
+        Example output:
+        {{"tags": ["python", "api", "error-handling"], "summary": "The user is debugging a ConnectionError in their Python API client and learning about retry logic."}}"""
 
         try:
             response = requests.post(
@@ -71,9 +66,10 @@ class OfflineTagGenerator:
                     "model": self.config.ollama.model,
                     "prompt": prompt,
                     "stream": False,
+                    "format": "json",  # Force JSON mode if model supports it
                     "options": {
                         "temperature": self.config.ollama.temperature,
-                        "num_predict": 60,
+                        "num_predict": 150,
                         "top_p": 0.9,
                     },
                 },
@@ -81,21 +77,61 @@ class OfflineTagGenerator:
             )
 
             if response.status_code == 200:
-                tags_text = response.json().get("response", "").strip()
-                return self._parse_tags(tags_text)[:5]
+                response_json = response.json()
+                content = response_json.get("response", "").strip()
+
+                # Check if it's already a dict (some Ollama versions/wrappers might parse it)
+                if isinstance(content, dict):
+                    return self._validate_metadata(content)
+
+                # Parse JSON string
+                import json
+
+                try:
+                    data = json.loads(content)
+                    return self._validate_metadata(data)
+                except json.JSONDecodeError:
+                    # Fallback if valid JSON wasn't returned
+                    tags = self._parse_tags(content)
+                    return {"tags": tags[:5], "summary": None}
 
         except requests.exceptions.Timeout:
             print("⚠️  Ollama request timed out. Using fallback.")
         except Exception as e:
-            print(f"⚠️  Error generating tags: {e}. Using fallback.")
+            print(f"⚠️  Error generating metadata: {e}. Using fallback.")
 
-        return self._fallback_tags(conversation)
+        return self._fallback_metadata(conversation)
+
+    def _validate_metadata(self, data: dict) -> dict:
+        """Validate and clean metadata"""
+        tags = data.get("tags", [])
+        summary = data.get("summary")
+
+        # Clean tags
+        valid_tags = []
+        if isinstance(tags, list):
+            for tag in tags:
+                if isinstance(tag, str):
+                    tag = tag.strip().lower()
+                    # Only keep reasonable tags
+                    if 2 <= len(tag) <= 30 and all(
+                        c.isalnum() or c in ["-", "_"] for c in tag
+                    ):
+                        valid_tags.append(tag)
+
+        return {"tags": valid_tags[:5], "summary": str(summary) if summary else None}
 
     def _parse_tags(self, tags_text: str) -> List[str]:
-        """Parse and clean tag text from LLM response"""
-        # Remove common prefixes the LLM might add
+        """Legacy helper for parsing simple tag lists"""
+        # Remove common prefixes
         tags_text = tags_text.replace("Your tags (comma-separated):", "").replace(
             "tags:", ""
+        )
+        tags_text = (
+            tags_text.replace("{", "")
+            .replace("}", "")
+            .replace("[", "")
+            .replace("]", "")
         )
         tags_text = tags_text.strip()
 
@@ -105,14 +141,15 @@ class OfflineTagGenerator:
         # Filter out invalid tags
         valid_tags = []
         for tag in tags:
-            # Remove quotes, periods, etc.
             tag = tag.strip(".\"'")
-
-            # Only keep reasonable tags (1-25 chars, alphanumeric + hyphens)
             if 2 <= len(tag) <= 25 and all(c.isalnum() or c in ["-", "_"] for c in tag):
                 valid_tags.append(tag)
 
         return valid_tags
+
+    def _fallback_metadata(self, conversation: Conversation) -> dict:
+        """Fallback when LLM unavailable"""
+        return {"tags": self._fallback_tags(conversation), "summary": None}
 
     def _fallback_tags(self, conversation: Conversation) -> List[str]:
         """Simple keyword extraction as fallback when LLM unavailable"""

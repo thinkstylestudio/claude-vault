@@ -58,9 +58,11 @@ class SyncEngine:
                     existing = self.state.get_conversation(conv.id)
                     current_hash = conv.content_hash()
 
-                    # Generate tags if missing or insufficient
+                    # Generate tags/metadata if missing
                     if not conv.tags or len(conv.tags) < 2:
-                        conv.tags = self.tag_generator.generate_tags(conv)
+                        metadata = self.tag_generator.generate_metadata(conv)
+                        conv.tags = metadata["tags"]
+                        conv.summary = metadata["summary"]
 
                     # Find related conversations based on tags [3]
                     related_convs = self._find_related_by_tags(conv, conversations)

@@ -354,15 +354,24 @@ def retag(
             # Parse conversation from file
             conv = parser.parse_conversation_from_markdown(post)
 
-            # Generate new tags
-            new_tags = tag_gen.generate_tags(conv)
-            post["tags"] = new_tags
+            # Generate new metadata
+            metadata = tag_gen.generate_metadata(conv)
+            post["tags"] = metadata["tags"]
+            if metadata["summary"]:
+                post["summary"] = metadata["summary"]
 
             # Save updated file
             md_file.write_text(frontmatter.dumps(post))
             updated += 1
 
-            console.print(f"✓ {md_file.name}: {', '.join(new_tags)}")
+            summary_preview = (
+                f" (Summary: {metadata['summary'][:30]}...)"
+                if metadata["summary"]
+                else ""
+            )
+            console.print(
+                f"✓ {md_file.name}: {', '.join(metadata['tags'])}{summary_preview}"
+            )
 
         except Exception as e:
             console.print(f"✗ {md_file.name}: {e}")
