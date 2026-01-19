@@ -74,6 +74,11 @@ disallow_untyped_defs = false  # Set to true for stricter checking
 ignore_missing_imports = true
 files = ["claude_vault/**/*.py"]
 
+[[tool.mypy.overrides]]
+module = ["pytest", "_pytest", "_pytest.*"]
+ignore_errors = true
+
+
 # Pytest configuration
 [tool.pytest.ini_options]
 testpaths = ["tests"]
