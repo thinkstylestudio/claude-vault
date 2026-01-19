@@ -12,7 +12,7 @@ Claude Vault is a command-line tool that syncs your Claude AI conversations into
 - ✅ **Simple CLI**: Easy to use, powerful features
 - ✅ **Bulk Historical Import**: Import your entire Claude conversation history at once
 - ✅ **Obsidian-native**: Full frontmatter, tags, and metadata support
-- ✅ **AI-Powered Tagging**: Automatic tag generation using local LLMs (Ollama) - no API costs
+- ✅ **AI-Powered Tagging & Summarization**: Automatic generation of tags and summaries using local LLMs (Ollama) - no API costs
 - ✅ **Bi-directional sync**: Rename and move files freely - they stay in sync
 - ✅ **Smart updates**: Only syncs what's changed
 - ✅ **UUID tracking**: Maintains file relationships even after renaming
@@ -34,7 +34,7 @@ Claude Vault uses a modular architecture to handle different conversation format
 
 1.  **Format Detection**: Automatically identifies if a file is a Web export (`.json`) or Code History (`.jsonl`).
 2.  **Parsing**: specialized parsers (`messages.py` vs `code_parser.py`) extract messages, timestamps, and metadata.
-3.  **Tagging**: If configured, `OfflineTagGenerator` uses a local LLM to analyze the conversation content and generate relevant tags.
+3.  **Tagging & Summarization**: If configured, `OfflineTagGenerator` uses a local LLM to analyze the conversation content, generating relevant tags and a concise summary.
 4.  **Syncing**: The `SyncEngine` writes markdown files to your Obsidian vault, updating only what has changed based on content hashing.
 
 
@@ -314,7 +314,7 @@ claude-vault search "debugging" --no-show-related
 
 #### `retag`
 
-Regenerate tags for conversations using AI.
+Regenerate tags and summaries for conversations using AI.
 
 ```bash
 claude-vault retag [OPTIONS]
