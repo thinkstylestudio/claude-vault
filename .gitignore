@@ -18,6 +18,9 @@ dist/
 # Venv
 venv/
 
+# Claude
+.claude/
+
 # Claude Vault specific
 .claude-vault/
 *.db
