@@ -121,8 +121,10 @@ claude-vault sync ~/.claude
 # Explicit source
 claude-vault sync export.json --source web
 claude-vault sync export.jsonl --source code
+```
 
 ### 4. Check Status
+
 ```bash
 claude-vault status
 ```
