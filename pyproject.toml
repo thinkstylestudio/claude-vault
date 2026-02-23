@@ -19,6 +19,8 @@ dependencies = [
     "python-frontmatter>=1.0.0",
     "rich>=13.0.0",
     "requests>=2.31.0",
+    "watchdog>=3.0.0",
+    "numpy>=1.24.0",
 ]
 
 [project.optional-dependencies]
@@ -55,6 +57,7 @@ select = [
 ]
 ignore = [
     "E501",  # line too long (handled by formatter)
+    "B008",  # function call in argument defaults (required for Typer CLI)
 ]
 
 [tool.ruff.format]

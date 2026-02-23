@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -16,8 +16,29 @@ class OllamaConfig(BaseModel):
     temperature: float = 0.3
 
 
+class WatchConfig(BaseModel):
+    enabled: bool = True
+    debounce_seconds: float = 2.0
+    throttle_seconds: float = 10.0
+    auto_start: bool = False
+    watch_paths: List[Dict[str, str]] = Field(default_factory=list)
+    max_queue_size: int = 100
+    log_level: str = "INFO"
+
+
+class EmbeddingConfig(BaseModel):
+    model: str = "nomic-embed-text"
+    enabled: bool = True
+    auto_generate: bool = False
+    chunk_size: int = 2000
+    chunk_overlap: int = 200
+    url: str = "http://localhost:11434/api/embed"
+
+
 class Config(BaseModel):
     ollama: OllamaConfig = Field(default_factory=OllamaConfig)
+    watch: WatchConfig = Field(default_factory=WatchConfig)
+    embeddings: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
 
     # Custom fallback keywords if user wants to override defaults
     # Mapping of "tag" -> ["keyword1", "keyword2"]

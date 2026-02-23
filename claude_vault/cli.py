@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 import frontmatter
 import typer
@@ -11,9 +11,11 @@ from rich.table import Table
 from .code_parser import ClaudeCodeHistoryParser
 from .config import get_config_path, load_config
 from .parser import ClaudeExportParser
+from .semantic_search import SemanticSearchEngine
 from .state import StateManager
 from .sync import SyncEngine
 from .tagging import OfflineTagGenerator
+from .watcher import WatchManager
 
 app = typer.Typer(help="Claude Vault - Sync Claude conversations to Obsidian")
 console = Console()
@@ -233,12 +235,77 @@ def search(
     vault_path: Optional[Path] = None,
     tag: Optional[str] = typer.Option(None, help="Filter by tag"),
     show_related: bool = typer.Option(True, help="Show related conversations"),
+    mode: str = typer.Option(
+        "auto",
+        help="Search mode: auto (semantic if available), semantic, keyword, or hybrid",
+    ),
+    threshold: float = typer.Option(
+        0.5, help="Minimum similarity score for semantic search (0.0-1.0)"
+    ),
 ):
-    """Search across all conversations"""
+    """Search across all conversations with semantic understanding"""
 
     vault_path = vault_path or Path.cwd()
     conversations_dir = vault_path / "conversations"
-    results = []
+
+    # Determine search mode
+    semantic_engine = SemanticSearchEngine(vault_path)
+
+    if mode == "auto":
+        # Use semantic if available, fallback to keyword
+        if semantic_engine.is_available():
+            mode = "semantic"
+        else:
+            console.print(
+                "[yellow]⚠ Ollama not available. Using keyword search.[/yellow]"
+            )
+            console.print(
+                "[dim]Tip: Start Ollama with 'ollama serve' and 'ollama pull nomic-embed-text' for semantic search[/dim]\n"
+            )
+            mode = "keyword"
+
+    # Perform search based on mode
+    if mode == "semantic":
+        # Ensure embeddings exist
+        semantic_engine.ensure_embeddings_exist()
+
+        # Perform semantic search
+        semantic_results = semantic_engine.search(
+            keyword, limit=10, threshold=threshold
+        )
+
+        if semantic_results:
+            console.print(
+                f"\n[green]Found in {len(semantic_results)} conversations (semantic search):[/green]\n"
+            )
+            for result in semantic_results:
+                console.print(
+                    f"{result.rank}. [{Path(result.file_path).name}] {result.title} (score: {result.score:.2f})"
+                )
+                console.print(
+                    f"   Tags: {', '.join(result.tags) if result.tags else '[dim]no tags[/dim]'}"
+                )
+                # Show matching chunk preview
+                preview = result.chunk_text[:200].replace("\n", " ")
+                console.print(f"   [dim]{preview}...[/dim]")
+                console.print()
+
+            # Display with file opening
+            console.print("\n[blue]Open result?[/blue]")
+            choice = typer.prompt("Enter number (or 'q' to quit)")
+
+            if choice.isdigit() and 1 <= int(choice) <= len(semantic_results):
+                selected = semantic_results[int(choice) - 1]
+                typer.launch(selected.file_path)
+        else:
+            console.print("[yellow]No matches found[/yellow]")
+            console.print(
+                f"[dim]Try lowering the threshold (current: {threshold})[/dim]"
+            )
+        return
+
+    # Keyword search (original implementation)
+    results: List[Dict[str, Any]] = []
 
     # Search through all markdown files
     for md_file in conversations_dir.glob("*.md"):
@@ -275,31 +342,34 @@ def search(
     # Display results
     if results:
         console.print(f"\n[green]Found in {len(results)} conversations:[/green]\n")
-        for i, result in enumerate(results, 1):
+        for i, kw_result in enumerate(results, 1):
             console.print(
-                f"{i}. [{result['file']}] {result['title']} ({result['match_count']} matches)"
+                f"{i}. [{kw_result['file']}] {kw_result['title']} ({kw_result['match_count']} matches)"
             )
             console.print(
-                f"   Tags: {', '.join(result['tags']) if result['tags'] else '[dim]no tags[/dim]'}"
+                f"   Tags: {', '.join(kw_result['tags']) if kw_result['tags'] else '[dim]no tags[/dim]'}"
             )
 
             # Show related conversations, if enabled, with common tags
-            if show_related and result["related"]:
+            if show_related and kw_result["related"]:
                 console.print("   [yellow]Related:[/yellow]")
-                for rel_conv in result["related"][:3]:
+                for rel_conv in kw_result["related"][:3]:
                     # Clean wikilink format
                     clean_name = rel_conv.replace("[[", "").replace("]]", "")
 
                     # Show common tags if available
-                    if result["related_tags"] and clean_name in result["related_tags"]:
-                        common_tags = ", ".join(result["related_tags"][clean_name])
+                    if (
+                        kw_result["related_tags"]
+                        and clean_name in kw_result["related_tags"]
+                    ):
+                        common_tags = ", ".join(kw_result["related_tags"][clean_name])
                         console.print(
                             f"      • {clean_name} [dim](common: {common_tags})[/dim]"
                         )
                     else:
                         console.print(f"      • {clean_name}")
 
-            for match in result["matches"][:2]:  # Show first 2 matches
+            for match in kw_result["matches"][:2]:  # Show first 2 matches
                 console.print(f"   [dim]...{match}...[/dim]")
             console.print()
 
@@ -308,9 +378,9 @@ def search(
         choice = typer.prompt("Enter number (or 'q' to quit)")
 
         if choice.isdigit() and 1 <= int(choice) <= len(results):
-            selected = results[int(choice) - 1]
+            kw_selected: Dict[str, Any] = results[int(choice) - 1]
             # Open in default editor or show full content
-            typer.launch(str(vault_path / "conversations" / selected["file"]))
+            typer.launch(str(vault_path / "conversations" / kw_selected["file"]))
         else:
             print("Exiting without opening any files.")
     else:
@@ -390,6 +460,173 @@ def config():
 
     if typer.confirm("Do you want to edit the configuration?"):
         typer.launch(str(get_config_path()))
+
+
+@app.command()
+def watch(vault_path: Optional[Path] = None):
+    """Start watching for conversation changes"""
+
+    vault_path = vault_path or Path.cwd()
+    config_dir = vault_path / ".claude-vault"
+
+    if not config_dir.exists():
+        console.print("[red]✗ Error: Claude Vault not initialized[/red]")
+        console.print("[yellow]Run 'claude-vault init' first[/yellow]")
+        raise typer.Exit(1)
+
+    watch_manager = WatchManager(vault_path)
+
+    try:
+        watch_manager.start()
+    except RuntimeError as e:
+        console.print(f"[red]✗ Error: {e}[/red]")
+        console.print("[dim]Check watch status with: claude-vault watch-status[/dim]")
+        raise typer.Exit(1) from None
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Interrupted by user[/yellow]")
+
+
+@app.command()
+def watch_add(
+    path: Path = typer.Argument(..., help="Path to watch"),
+    source: str = typer.Option("auto", help="Source type: auto, web, or code"),
+    vault_path: Optional[Path] = None,
+):
+    """Add a path to watch list"""
+
+    vault_path = vault_path or Path.cwd()
+    config_dir = vault_path / ".claude-vault"
+
+    if not config_dir.exists():
+        console.print("[red]✗ Error: Claude Vault not initialized[/red]")
+        raise typer.Exit(1)
+
+    # Expand user path
+    path = path.expanduser()
+
+    # Auto-detect source type
+    if source == "auto":
+        if path.suffix == ".json":
+            source = "web"
+        elif path.suffix == ".jsonl" or ".claude" in str(path):
+            source = "code"
+        else:
+            source = "web"  # Default
+
+    # Add to state
+    state = StateManager(vault_path)
+    state.add_watch_path(str(path), source)
+
+    console.print(f"[green]✓ Added {path} to watch list ({source} exports)[/green]")
+    console.print("[dim]Start watching with: claude-vault watch[/dim]")
+
+
+@app.command()
+def watch_remove(
+    path: Path = typer.Argument(..., help="Path to remove from watch list"),
+    vault_path: Optional[Path] = None,
+):
+    """Remove a path from watch list"""
+
+    vault_path = vault_path or Path.cwd()
+    path = path.expanduser()
+
+    state = StateManager(vault_path)
+    state.remove_watch_path(str(path))
+
+    console.print(f"[green]✓ Removed {path} from watch list[/green]")
+
+
+@app.command()
+def watch_status(vault_path: Optional[Path] = None):
+    """Show watch status and statistics"""
+
+    vault_path = vault_path or Path.cwd()
+    config_dir = vault_path / ".claude-vault"
+
+    if not config_dir.exists():
+        console.print("[red]✗ Error: Claude Vault not initialized[/red]")
+        raise typer.Exit(1)
+
+    watch_manager = WatchManager(vault_path)
+    status = watch_manager.get_status()
+
+    console.print("\n[blue]📊 Watch Status[/blue]\n")
+
+    # Status table
+    table = Table(show_header=False)
+    table.add_column("Property", style="cyan")
+    table.add_column("Value")
+
+    if status["is_running"]:
+        table.add_row("Status", "[green]Running[/green]")
+        table.add_row("PID", str(status["pid"]))
+    else:
+        table.add_row("Status", "[yellow]Stopped[/yellow]")
+
+    if status["last_started"]:
+        table.add_row("Last Started", status["last_started"][:19])
+    if status["last_stopped"]:
+        table.add_row("Last Stopped", status["last_stopped"][:19])
+
+    table.add_row("Total Syncs", str(status["total_syncs"]))
+    table.add_row("Total Errors", str(status["total_errors"]))
+
+    console.print(table)
+
+    # Watch paths
+    if status["watch_paths"]:
+        console.print("\n[blue]Watch Paths:[/blue]")
+        for wp in status["watch_paths"]:
+            last_sync = (
+                f"Last sync: {wp['last_sync'][:19]}"
+                if wp["last_sync"]
+                else "Never synced"
+            )
+            console.print(f"  • {wp['path']} ({wp['source_type']}) - {last_sync}")
+    else:
+        console.print("\n[yellow]No watch paths configured[/yellow]")
+        console.print("[dim]Add paths with: claude-vault watch-add <path>[/dim]")
+
+    console.print()
+
+
+@app.command()
+def watch_stop(vault_path: Optional[Path] = None):
+    """Stop the watch service"""
+
+    vault_path = vault_path or Path.cwd()
+    config_dir = vault_path / ".claude-vault"
+
+    if not config_dir.exists():
+        console.print("[red]✗ Error: Claude Vault not initialized[/red]")
+        raise typer.Exit(1)
+
+    watch_manager = WatchManager(vault_path)
+    status = watch_manager.get_status()
+
+    if not status["is_running"]:
+        console.print("[yellow]⚠ Watch mode is not running[/yellow]")
+        return
+
+    # Send signal to stop the process
+    import os
+    import signal
+
+    try:
+        os.kill(status["pid"], signal.SIGTERM)
+        console.print("[green]✓ Sent stop signal to watch process[/green]")
+    except ProcessLookupError:
+        console.print(
+            "[yellow]⚠ Watch process not found (may have already stopped)[/yellow]"
+        )
+        # Clean up stale state
+        state = StateManager(vault_path)
+        watch_state = state.get_watch_state()
+        watch_state["is_running"] = False
+        state.save_watch_state(watch_state)
+    except PermissionError:
+        console.print("[red]✗ Permission denied to stop watch process[/red]")
 
 
 if __name__ == "__main__":

@@ -13,6 +13,8 @@ Claude Vault is a command-line tool that syncs your Claude AI conversations into
 - ✅ **Bulk Historical Import**: Import your entire Claude conversation history at once
 - ✅ **Obsidian-native**: Full frontmatter, tags, and metadata support
 - ✅ **AI-Powered Tagging & Summarization**: Automatic generation of tags and summaries using local LLMs (Ollama) - no API costs
+- ✅ **Auto-Sync with Watch Mode**: Real-time syncing when conversation files change
+- ✅ **Semantic Search**: AI-powered search by meaning, not just keywords
 - ✅ **Bi-directional sync**: Rename and move files freely - they stay in sync
 - ✅ **Smart updates**: Only syncs what's changed
 - ✅ **UUID tracking**: Maintains file relationships even after renaming
@@ -66,7 +68,7 @@ claude-vault --help
 python tests/test_parser.py
 ```
 
-### Install Ollama (Optional for AI tagging)
+### Install Ollama (Optional for AI tagging & semantic search)
 ```bash
 # On macOS
 brew install ollama
@@ -74,8 +76,11 @@ brew install ollama
 # Start ollama
 ollama serve
 
-# Pull a balanced model (quality/speed)
+# Pull a balanced model for tagging (quality/speed)
 ollama pull llama3.2:3b
+
+# Pull embedding model for semantic search (optional)
+ollama pull nomic-embed-text
 ```
 
 ## Quick Usage
@@ -147,9 +152,97 @@ claude-vault verify
 claude-vault verify --cleanup
 ```
 
+## Auto-Sync with Watch Mode
+
+Keep your vault automatically synced with Claude conversations in real-time:
+
+### Setup Watch Mode
+
+```bash
+# Add paths to watch
+claude-vault watch-add ~/Downloads --source web
+claude-vault watch-add ~/.claude --source code
+
+# Start watching (stays in foreground with live updates)
+claude-vault watch
+
+# Or run in background
+claude-vault watch &
+```
+
+Watch mode detects file changes in real-time and syncs automatically. No more manual sync commands!
+
+### Watch Mode Commands
+
+```bash
+# Check watch status
+claude-vault watch-status
+
+# Stop watch mode
+claude-vault watch-stop
+
+# Remove a watch path
+claude-vault watch-remove ~/Downloads
+```
+
+### How It Works
+
+- **Debouncing**: Waits 2 seconds after file changes to handle editor auto-saves
+- **Throttling**: Prevents excessive syncs (minimum 10 seconds between syncs per file)
+- **Smart Detection**: Automatically detects Web (.json) vs Code (.jsonl) formats
+- **Error Handling**: Continues watching even if individual syncs fail
+
+## Semantic Search
+
+Find conversations by meaning, not just keywords:
+
+### Setup Semantic Search
+
+```bash
+# Install embedding model (first time only)
+ollama pull nomic-embed-text
+
+# Search semantically (default mode if Ollama is running)
+claude-vault search "async programming"
+```
+
+Semantic search understands concepts - searching "asynchronous programming" will find conversations about "asyncio" even without exact keyword matches!
+
+### Search Modes
+
+```bash
+# Semantic search (AI-powered, finds by concept)
+claude-vault search "machine learning" --mode semantic
+
+# Keyword search (traditional exact matching)
+claude-vault search "python" --mode keyword
+
+# Auto mode (uses semantic if available, falls back to keyword)
+claude-vault search "debugging" --mode auto
+
+# Adjust similarity threshold (0.0-1.0, default 0.5)
+claude-vault search "API" --mode semantic --threshold 0.7
+```
+
+### How It Works
+
+1. **First Search**: Automatically generates embeddings for all conversations (one-time process)
+2. **Subsequent Searches**: Instant semantic search using cached embeddings
+3. **Relevance Scores**: Each result shows similarity score (0.0-1.0)
+4. **Smart Chunking**: Long conversations split into chunks for better accuracy
+5. **Offline-First**: All processing happens locally via Ollama (no external APIs)
+
+### Search Features
+
+- **Conceptual Matching**: Finds related topics even with different terminology
+- **Context Preview**: Shows relevant snippets from matching conversations
+- **Relevance Ranking**: Results sorted by similarity score
+- **Hybrid Search**: Combine semantic understanding with keyword precision
+- **Fallback Support**: Auto-switches to keyword search if Ollama unavailable
+
 ## Troubleshooting
 
-**"Ollama not running":** Start with `ollama serve`
+**"Ollama not running":** Start with `ollama serve`. For semantic search, also run `ollama pull nomic-embed-text`
 
 **"Module not found:"** Reinstall with `pip install -e .`
 
