@@ -88,6 +88,9 @@ def sync(
     export_path: Path,
     vault_path: Optional[Path] = None,
     source: str = typer.Option("auto", help="Source type: auto, web, code"),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Preview changes without applying them"
+    ),
 ):
     """Sync Claude conversations to markdown files"""
 
@@ -111,7 +114,14 @@ def sync(
         else:
             source = "web"
 
-    console.print(f"[blue]📦 Syncing conversations from {export_path.name}...[/blue]\n")
+    if dry_run:
+        console.print(
+            f"[yellow]🔍 DRY RUN: Previewing changes from {export_path.name}...[/yellow]\n"
+        )
+    else:
+        console.print(
+            f"[blue]📦 Syncing conversations from {export_path.name}...[/blue]\n"
+        )
 
     # Use appropriate parser
     parser: Union[ClaudeCodeHistoryParser, ClaudeExportParser]
@@ -123,17 +133,34 @@ def sync(
     engine = SyncEngine(vault_path)
     engine.parser = parser
 
+    from rich.progress import BarColumn, MofNCompleteColumn, TimeRemainingColumn
+
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TimeRemainingColumn(),
         console=console,
     ) as progress:
-        task = progress.add_task("[cyan]Processing conversations...", total=None)
-        result = engine.sync(export_path)
-        progress.update(task, completed=100)
+        task = progress.add_task("[cyan]Processing conversations...", total=100)
+
+        def update_progress(description: str, current: int, total: int):
+            progress.update(
+                task, description=f"[cyan]{description}", completed=current, total=total
+            )
+
+        result = engine.sync(
+            export_path, dry_run=dry_run, progress_callback=update_progress
+        )
 
     # Display results
-    console.print("\n[green]✓ Sync complete![/green]\n")
+    if dry_run:
+        console.print(
+            "\n[yellow]🔍 DRY RUN: Preview of changes (no files modified)[/yellow]\n"
+        )
+    else:
+        console.print("\n[green]✓ Sync complete![/green]\n")
 
     table = Table(show_header=True, header_style="bold magenta")
     table.add_column("Status", style="dim")
@@ -147,9 +174,40 @@ def sync(
         table.add_row("Errors", f"[red]{result['errors']}[/red]")
 
     console.print(table)
-    console.print(
-        f"\n[dim]Conversations saved to: {vault_path / 'conversations'}[/dim]"
-    )
+
+    # Show details for dry-run or if there are changes
+    if dry_run and (
+        result["new"] > 0 or result["updated"] > 0 or result["recreated"] > 0
+    ):
+        console.print("\n[blue]Details:[/blue]")
+        for detail in result.get("details", [])[:10]:  # Show first 10
+            action = detail.get("action", "unknown")
+            title = detail.get("title", "Unknown")
+            file_path = detail.get("file_path", "")
+
+            action_color = {
+                "new": "green",
+                "updated": "yellow",
+                "recreated": "yellow",
+                "error": "red",
+            }.get(action, "white")
+
+            console.print(
+                f"  [{action_color}]{action.upper()}[/{action_color}]: {title}"
+            )
+            if file_path:
+                console.print(f"    [dim]→ {file_path}[/dim]")
+
+        if len(result.get("details", [])) > 10:
+            console.print(f"\n[dim]... and {len(result['details']) - 10} more[/dim]")
+
+        console.print(
+            "\n[yellow]💡 Run without --dry-run to apply these changes[/yellow]"
+        )
+    elif not dry_run:
+        console.print(
+            f"\n[dim]Conversations saved to: {vault_path / 'conversations'}[/dim]"
+        )
 
 
 @app.command()
@@ -189,44 +247,102 @@ def verify(
     cleanup: bool = typer.Option(
         False, "--cleanup", help="Remove orphaned database entries"
     ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Preview cleanup without applying it"
+    ),
 ):
     """Verify integrity of tracked conversations and optionally clean up mismatches"""
     vault_path = vault_path or Path.cwd()
     state = StateManager(vault_path)
     conversations = state.get_all_conversations()
 
-    console.print(f"[blue]🔍 Verifying {len(conversations)} conversations...[/blue]\n")
+    if dry_run and cleanup:
+        console.print(
+            f"[yellow]🔍 DRY RUN: Verifying {len(conversations)} conversations...[/yellow]\n"
+        )
+    else:
+        console.print(
+            f"[blue]🔍 Verifying {len(conversations)} conversations...[/blue]\n"
+        )
+
+    from rich.progress import BarColumn, MofNCompleteColumn
 
     missing = []
-    for conv in conversations:
-        file_path = vault_path / conv["file_path"]
-        if not file_path.exists():
-            missing.append(conv)
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task("[cyan]Checking files...", total=len(conversations))
+
+        for conv in conversations:
+            file_path = vault_path / conv["file_path"]
+            if not file_path.exists():
+                missing.append(conv)
+            progress.advance(task)
 
     if missing:
-        console.print(f"[yellow]⚠ Found {len(missing)} missing files:[/yellow]")
-        for conv in missing:
+        console.print(f"\n[yellow]⚠ Found {len(missing)} missing files:[/yellow]")
+        for conv in missing[:10]:  # Show first 10
             console.print(f"  - {conv['file_path']}")
 
+        if len(missing) > 10:
+            console.print(f"  [dim]... and {len(missing) - 10} more[/dim]")
+
         if cleanup:
-            console.print(
-                f"\n[yellow]Cleaning up {len(missing)} orphaned entries...[/yellow]"
-            )
+            if dry_run:
+                console.print(
+                    f"\n[yellow]🔍 DRY RUN: Would clean up {len(missing)} orphaned entries[/yellow]"
+                )
+                console.print("\n[blue]Entries that would be removed:[/blue]")
+                for conv in missing[:10]:
+                    console.print(
+                        f"  - {conv['file_path']} (UUID: {conv['uuid'][:8]}...)"
+                    )
 
-            for conv in missing:
-                state.delete_conversation(conv["uuid"])
-                console.print(f"  ✓ Removed: {conv['file_path']}")
+                if len(missing) > 10:
+                    console.print(f"  [dim]... and {len(missing) - 10} more[/dim]")
 
-            console.print(
-                f"\n[green]✓ Cleaned up {len(missing)} orphaned database entries[/green]"
-            )
+                console.print(
+                    "\n[yellow]💡 Run without --dry-run to apply cleanup[/yellow]"
+                )
+            else:
+                console.print(
+                    f"\n[yellow]Cleaning up {len(missing)} orphaned entries...[/yellow]"
+                )
+
+                with Progress(
+                    SpinnerColumn(),
+                    TextColumn("[progress.description]{task.description}"),
+                    BarColumn(),
+                    MofNCompleteColumn(),
+                    console=console,
+                ) as progress:
+                    task = progress.add_task(
+                        "[cyan]Removing entries...", total=len(missing)
+                    )
+
+                    for conv in missing:
+                        state.delete_conversation(conv["uuid"])
+                        console.print(f"  ✓ Removed: {conv['file_path']}")
+                        progress.advance(task)
+
+                console.print(
+                    f"\n[green]✓ Cleaned up {len(missing)} orphaned database entries[/green]"
+                )
         else:
             console.print(
                 "\n[dim]Tip: Run with --cleanup flag to remove these entries from database[/dim]"
             )
             console.print("[dim]Command: claude-vault verify --cleanup[/dim]")
+            console.print(
+                "[dim]Preview with: claude-vault verify --cleanup --dry-run[/dim]"
+            )
     else:
-        console.print("[green]✓ All conversations verified successfully![/green]")
+        console.print("\n[green]✓ All conversations verified successfully![/green]")
 
 
 @app.command()
@@ -391,6 +507,9 @@ def search(
 def retag(
     vault_path: Optional[Path] = None,
     force: bool = typer.Option(False, help="Regenerate all tags, even existing ones"),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Preview changes without applying them"
+    ),
 ):
     """Regenerate tags for conversations using AI"""
 
@@ -410,43 +529,115 @@ def retag(
 
     conversations_dir = vault_path / "conversations"
     updated = 0
+    details = []
 
-    console.print("[blue]Regenerating tags...[/blue]\n")
+    if dry_run:
+        console.print("[yellow]🔍 DRY RUN: Previewing tag regeneration...[/yellow]\n")
+    else:
+        console.print("[blue]Regenerating tags...[/blue]\n")
 
+    # Collect files to process
+    files_to_process = []
     for md_file in conversations_dir.glob("*.md"):
         try:
             post = frontmatter.load(md_file)
-
             # Skip if has good tags and not forcing
             if not force and post.get("tags") and len(post.get("tags", [])) >= 3:
                 continue
+            files_to_process.append((md_file, post))
+        except Exception:
+            continue
 
-            # Parse conversation from file
-            conv = parser.parse_conversation_from_markdown(post)
+    from rich.progress import BarColumn, MofNCompleteColumn, TimeRemainingColumn
 
-            # Generate new metadata
-            metadata = tag_gen.generate_metadata(conv)
-            post["tags"] = metadata["tags"]
-            if metadata["summary"]:
-                post["summary"] = metadata["summary"]
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TimeRemainingColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task(
+            "[cyan]Processing conversations...", total=len(files_to_process)
+        )
 
-            # Save updated file
-            md_file.write_text(frontmatter.dumps(post))
-            updated += 1
+        for md_file, post in files_to_process:
+            try:
+                progress.update(
+                    task, description=f"[cyan]Processing {md_file.name[:40]}..."
+                )
 
-            summary_preview = (
-                f" (Summary: {metadata['summary'][:30]}...)"
-                if metadata["summary"]
-                else ""
-            )
-            console.print(
-                f"✓ {md_file.name}: {', '.join(metadata['tags'])}{summary_preview}"
-            )
+                # Parse conversation from file
+                conv = parser.parse_conversation_from_markdown(post)
 
-        except Exception as e:
-            console.print(f"✗ {md_file.name}: {e}")
+                # Generate new metadata
+                metadata = tag_gen.generate_metadata(conv)
 
-    console.print(f"\n[green]Updated {updated} conversations[/green]")
+                if dry_run:
+                    # Just collect details
+                    details.append(
+                        {
+                            "file": md_file.name,
+                            "old_tags": post.get("tags", []),
+                            "new_tags": metadata["tags"],
+                            "summary": metadata.get("summary"),
+                        }
+                    )
+                    updated += 1
+                else:
+                    # Actually update the file
+                    post["tags"] = metadata["tags"]
+                    if metadata["summary"]:
+                        post["summary"] = metadata["summary"]
+
+                    # Save updated file
+                    md_file.write_text(frontmatter.dumps(post))
+                    updated += 1
+
+                    summary_preview = (
+                        f" (Summary: {metadata['summary'][:30]}...)"
+                        if metadata["summary"]
+                        else ""
+                    )
+                    console.print(
+                        f"✓ {md_file.name}: {', '.join(metadata['tags'])}{summary_preview}"
+                    )
+
+                progress.advance(task)
+
+            except Exception as e:
+                console.print(f"✗ {md_file.name}: {e}")
+                progress.advance(task)
+
+    if dry_run:
+        console.print(
+            f"\n[yellow]🔍 DRY RUN: Would update {updated} conversations[/yellow]\n"
+        )
+
+        if details:
+            console.print("[blue]Preview of changes (first 10):[/blue]")
+            for detail in details[:10]:
+                console.print(f"\n  [cyan]{detail['file']}[/cyan]")
+                console.print(
+                    f"    Old tags: {', '.join(detail['old_tags']) if detail['old_tags'] else '[dim]none[/dim]'}"
+                )
+                console.print(
+                    f"    New tags: [green]{', '.join(detail['new_tags'])}[/green]"
+                )
+                if detail.get("summary"):
+                    console.print(
+                        f"    Summary: [dim]{detail['summary'][:60]}...[/dim]"
+                    )
+
+            if len(details) > 10:
+                console.print(f"\n[dim]... and {len(details) - 10} more[/dim]")
+
+        console.print(
+            "\n[yellow]💡 Run without --dry-run to apply these changes[/yellow]"
+        )
+    else:
+        console.print(f"\n[green]Updated {updated} conversations[/green]")
 
 
 @app.command()

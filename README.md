@@ -150,7 +150,35 @@ claude-vault verify
 
 # Clean up orphaned entries
 claude-vault verify --cleanup
+
+# Preview changes before applying (dry-run mode)
+claude-vault sync ~/Downloads/conversations.json --dry-run
+claude-vault retag --dry-run
+claude-vault verify --cleanup --dry-run
 ```
+
+## Dry-Run Mode
+
+Preview changes before applying them to your vault:
+
+```bash
+# Preview what would be synced
+claude-vault sync conversations.json --dry-run
+
+# Preview tag regeneration
+claude-vault retag --dry-run
+claude-vault retag --force --dry-run
+
+# Preview cleanup operations
+claude-vault verify --cleanup --dry-run
+```
+
+Dry-run mode shows:
+
+- Summary statistics of changes
+- Detailed preview of affected files
+- No actual modifications to files or database
+- Progress indicators for all operations
 
 ## Auto-Sync with Watch Mode
 

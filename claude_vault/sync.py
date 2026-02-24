@@ -1,6 +1,6 @@
 import re
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 import frontmatter
 
@@ -26,17 +26,31 @@ class SyncEngine:
         self.conversations_dir.mkdir(exist_ok=True)
         self.tag_generator = OfflineTagGenerator()
 
-    def sync(self, export_path: Path) -> Dict:
+    def sync(
+        self,
+        export_path: Path,
+        dry_run: bool = False,
+        progress_callback: Optional[Callable[[str, int, int], None]] = None,
+    ) -> Dict[str, Any]:
         """
         Sync conversations from Claude export to markdown files
 
         Args:
             export_path: Path to conversations.json export
+            dry_run: If True, only simulate changes without writing files
+            progress_callback: Optional callback(description, current, total) for progress
 
         Returns:
-            Dictionary with sync statistics
+            Dictionary with sync statistics and details
         """
-        results = {"new": 0, "updated": 0, "unchanged": 0, "recreated": 0, "errors": 0}
+        results: Dict[str, Any] = {
+            "new": 0,
+            "updated": 0,
+            "unchanged": 0,
+            "recreated": 0,
+            "errors": 0,
+            "details": [],
+        }
 
         try:
             # Parse export
@@ -53,8 +67,13 @@ class SyncEngine:
                     "[dim]Tip: Start Ollama with 'ollama serve' for automatic tagging[/dim]"
                 )
 
-            for conv in conversations:
+            total = len(conversations)
+            for idx, conv in enumerate(conversations, 1):
                 try:
+                    # Report progress
+                    if progress_callback:
+                        progress_callback(conv.title[:50], idx, total)
+
                     existing = self.state.get_conversation(conv.id)
                     current_hash = conv.content_hash()
 
@@ -70,14 +89,27 @@ class SyncEngine:
                     if not existing:
                         # New conversation
                         file_path = self._generate_path(conv)
-                        self.markdown_gen.save(conv, file_path)
-                        self.state.save_conversation(
-                            conv.id,
-                            str(file_path.relative_to(self.vault_path)),
-                            current_hash,
-                            {"title": conv.title},
-                        )
+                        action = "new"
                         results["new"] += 1
+
+                        if not dry_run:
+                            self.markdown_gen.save(conv, file_path)
+                            self.state.save_conversation(
+                                conv.id,
+                                str(file_path.relative_to(self.vault_path)),
+                                current_hash,
+                                {"title": conv.title},
+                            )
+
+                        results["details"].append(
+                            {
+                                "action": action,
+                                "title": conv.title,
+                                "file_path": str(
+                                    file_path.relative_to(self.vault_path)
+                                ),
+                            }
+                        )
 
                     else:
                         # Conversation exists in database
@@ -87,26 +119,52 @@ class SyncEngine:
                         if not file_path.exists():
                             # File deleted - recreate it [3]
                             file_path = self._generate_path(conv)
-                            self.markdown_gen.save(conv, file_path, related_convs)
-                            self.state.save_conversation(
-                                conv.id,
-                                str(file_path.relative_to(self.vault_path)),
-                                current_hash,
-                                {"title": conv.title},
-                            )
+                            action = "recreated"
                             results["recreated"] += 1
-                            print(f"[yellow]⚠ Recreated: {file_path.name}[/yellow]")
+
+                            if not dry_run:
+                                self.markdown_gen.save(conv, file_path, related_convs)
+                                self.state.save_conversation(
+                                    conv.id,
+                                    str(file_path.relative_to(self.vault_path)),
+                                    current_hash,
+                                    {"title": conv.title},
+                                )
+                                print(f"[yellow]⚠ Recreated: {file_path.name}[/yellow]")
+
+                            results["details"].append(
+                                {
+                                    "action": action,
+                                    "title": conv.title,
+                                    "file_path": str(
+                                        file_path.relative_to(self.vault_path)
+                                    ),
+                                }
+                            )
 
                         elif existing["content_hash"] != current_hash:
                             # File exists but content changed [3]
-                            self.markdown_gen.save(conv, file_path, related_convs)
-                            self.state.save_conversation(
-                                conv.id,
-                                str(file_path.relative_to(self.vault_path)),
-                                current_hash,
-                                {"title": conv.title},
-                            )
+                            action = "updated"
                             results["updated"] += 1
+
+                            if not dry_run:
+                                self.markdown_gen.save(conv, file_path, related_convs)
+                                self.state.save_conversation(
+                                    conv.id,
+                                    str(file_path.relative_to(self.vault_path)),
+                                    current_hash,
+                                    {"title": conv.title},
+                                )
+
+                            results["details"].append(
+                                {
+                                    "action": action,
+                                    "title": conv.title,
+                                    "file_path": str(
+                                        file_path.relative_to(self.vault_path)
+                                    ),
+                                }
+                            )
 
                         else:
                             # File exists and unchanged
@@ -115,6 +173,9 @@ class SyncEngine:
                 except Exception as e:
                     print(f"Error processing conversation {conv.title}: {e}")
                     results["errors"] += 1
+                    results["details"].append(
+                        {"action": "error", "title": conv.title, "error": str(e)}
+                    )
 
         except Exception as e:
             print(f"Error during sync: {e}")
