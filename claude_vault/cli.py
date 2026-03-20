@@ -1,4 +1,5 @@
 import json
+import uuid as uuid_module
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
@@ -601,8 +602,23 @@ def retag(
                     task, description=f"[cyan]Processing {md_file.name[:40]}..."
                 )
 
-                # Parse conversation from file
-                conv = parser.parse_conversation_from_markdown(post)
+                # Create conversation from raw content (works for any markdown file)
+                from .models import Conversation, Message
+
+                # Get dates from frontmatter or use file modified time
+                date_str = post.get("date", "")
+                if not date_str:
+                    date_str = md_file.stat().st_mtime
+                updated_str = post.get("updated", date_str)
+
+                conv = Conversation(
+                    id=post.get("uuid", str(uuid_module.uuid4())),
+                    title=post.get("title", md_file.stem),
+                    messages=[Message(role="human", content=post.content)],
+                    created_at=date_str,
+                    updated_at=updated_str,
+                    tags=post.get("tags", []),
+                )
 
                 # Generate new metadata
                 metadata = tag_gen.generate_metadata(conv)
