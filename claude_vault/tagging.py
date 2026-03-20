@@ -94,21 +94,25 @@ Output only JSON."""
 
     def _note_prompt(self, title: str, content: str) -> str:
         """Prompt for regular markdown notes"""
-        return f"""Generate tags from this note. Look at what's ACTUALLY in it.
+        return f"""Generate tags from this note's ACTUAL content.
 
 Title: {title}
 Content:
 {content[:2000]}
 
-Output JSON: {{"tags": ["tag1", "tag2"], "summary": "What this contains"}}
+Output JSON: {{"tags": ["tag1", "tag2"], "summary": "One sentence about what this contains"}}
 
-Look for:
-- Hashtags (#example) - include as tags
-- Technologies mentioned (WordPress, Laravel, React, ACF, PHP, etc)
-- Project names
-- Key topics
+RULES:
+- Tags must describe the TOPICS/ACTIVITIES in the note
+- Include hashtags found in content (#job becomes job)
+- Include tech mentioned (WordPress, Laravel, React, PHP)
+- Include project names (StMarys, BeTheCure, cafe-api)
+- Include people/companies mentioned
+- Do NOT tag "communication" just because there's a Communication section
+- Do NOT tag "work_log" or "personal_log" just because of section headers
+- If note is mostly about ONE thing (job search, work task, personal), tag that
+- 2-5 tags
 
-Never use generic tags like "conversation-analysis", "natural-language-processing", "notes".
 Output only JSON."""
 
     def _validate_metadata(self, data: dict) -> dict:
@@ -123,6 +127,7 @@ Output only JSON."""
             "output-format", "debugging", "notes", "markdown", "general", "content",
             "text-processing", "dialogue-understanding", "dialogue-summarization",
             "dialogue-system", "dialogue-patterns", "conversation", "analysis",
+            "work_log", "personal_log", "communication",
         }
 
         valid_tags = []
@@ -136,6 +141,12 @@ Output only JSON."""
                         and tag not in bad_tags
                     ):
                         valid_tags.append(tag)
+
+        # If no valid tags, extract hashtags from summary as fallback
+        if not valid_tags and summary:
+            import re
+            hashtags = re.findall(r'#(\w+)', str(summary))
+            valid_tags = [h.lower() for h in hashtags[:5]]
 
         return {"tags": valid_tags[:5], "summary": str(summary) if summary else None}
 
