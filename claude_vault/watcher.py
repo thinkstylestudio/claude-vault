@@ -90,9 +90,10 @@ class SyncQueue:
 class ClaudeVaultEventHandler(FileSystemEventHandler):
     """Handles file system events for Claude Vault"""
 
-    def __init__(self, sync_callback, patterns=None):
+    def __init__(self, sync_callback, patterns=None, retag_callback=None):
         super().__init__()
         self.sync_callback = sync_callback
+        self.retag_callback = retag_callback
         self.patterns = patterns or ["*.json", "*.jsonl"]
         self.syncing_files = set()
         self.lock = Lock()
@@ -172,15 +173,70 @@ class ClaudeVaultEventHandler(FileSystemEventHandler):
                 self.syncing_files.discard(str(path))
 
 
+class MarkdownEventHandler(FileSystemEventHandler):
+    """Handles file system events for markdown files in the vault"""
+
+    def __init__(self, retag_callback):
+        super().__init__()
+        self.retag_callback = retag_callback
+        self.retagging_files = set()
+        self.lock = Lock()
+
+    def _should_process(self, event: FileSystemEvent) -> bool:
+        """Check if event should be processed"""
+        if event.is_directory:
+            return False
+
+        path = Path(str(event.src_path))
+
+        # Only process .md files
+        if not path.suffix == ".md":
+            return False
+
+        # Ignore hidden directories
+        if any(part.startswith(".") for part in path.parts):
+            return False
+
+        # Ignore temporary files
+        if path.name.startswith(".") or path.name.endswith(("~", ".tmp", ".swp")):
+            return False
+
+        return True
+
+    def on_modified(self, event: FileSystemEvent):
+        """Handle file modification"""
+        if not self._should_process(event):
+            return
+
+        path = Path(str(event.src_path))
+
+        # Prevent duplicate retags
+        with self.lock:
+            if str(path) in self.retagging_files:
+                return
+            self.retagging_files.add(str(path))
+
+        try:
+            console.print(
+                f"[cyan]{datetime.now().strftime('%H:%M:%S')}[/cyan] Retagging: {path.name}"
+            )
+            self.retag_callback(path)
+        finally:
+            with self.lock:
+                self.retagging_files.discard(str(path))
+
+
 class WatchManager:
     """Manages file watching and automatic syncing"""
 
-    def __init__(self, vault_path: Path):
+    def __init__(self, vault_path: Path, retag_on_change: bool = False):
         self.vault_path = vault_path
         self.state = StateManager(vault_path)
         self.sync_engine = SyncEngine(vault_path)
         self.config = load_config()
         self.observer = Observer()
+        self.retag_observer = Observer() if retag_on_change else None
+        self.retag_on_change = retag_on_change
         self.sync_queue = SyncQueue(
             debounce_seconds=self.config.watch.debounce_seconds,
             throttle_seconds=self.config.watch.throttle_seconds,
@@ -228,6 +284,12 @@ class WatchManager:
             else:
                 console.print(f"[yellow]⚠[/yellow] Path not found: {path}")
 
+        # Start watching vault for .md file changes if retag is enabled
+        if self.retag_on_change and self.retag_observer:
+            md_handler = MarkdownEventHandler(self._handle_retag)
+            self.retag_observer.schedule(md_handler, str(self.vault_path), recursive=True)
+            console.print(f"[green]✓[/green] Watching vault for .md changes (auto-retag)")
+
         # Set up signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
@@ -264,6 +326,10 @@ class WatchManager:
         self.observer.stop()
         self.observer.join(timeout=5)
 
+        if self.retag_observer:
+            self.retag_observer.stop()
+            self.retag_observer.join(timeout=5)
+
         # Update state
         state = self.state.get_watch_state()
         state["is_running"] = False
@@ -279,6 +345,52 @@ class WatchManager:
     def _handle_sync(self, file_path: Path):
         """Handle sync for a file"""
         self.sync_queue.schedule_sync(file_path, self._execute_sync)
+
+    def _handle_retag(self, file_path: Path):
+        """Handle retag for a markdown file"""
+        try:
+            import frontmatter
+
+            from claude_vault.tagging import OfflineTagGenerator
+
+            tag_gen = OfflineTagGenerator()
+            if not tag_gen.is_available():
+                return
+
+            # Load the markdown file
+            post = frontmatter.load(file_path)
+
+            # Skip if has good tags
+            if post.get("tags") and len(post.get("tags", [])) >= 3:
+                return
+
+            # Parse conversation from file
+            from claude_vault.parser import ClaudeExportParser
+
+            parser = ClaudeExportParser()
+            conv = parser.parse_conversation_from_markdown(post)
+
+            # Generate new metadata
+            metadata = tag_gen.generate_metadata(conv)
+
+            # Update frontmatter
+            post["tags"] = metadata["tags"]
+            if metadata["summary"]:
+                post["summary"] = metadata["summary"]
+
+            # Save updated file
+            file_path.write_text(frontmatter.dumps(post))
+
+            console.print(
+                f"[cyan]{datetime.now().strftime('%H:%M:%S')}[/cyan] "
+                f"[green]✓ Retagged[/green] {file_path.name}: {', '.join(metadata['tags'])}"
+            )
+
+        except Exception as e:
+            console.print(
+                f"[cyan]{datetime.now().strftime('%H:%M:%S')}[/cyan] "
+                f"[red]✗ Retag failed[/red] {file_path.name}: {e}"
+            )
 
     def _execute_sync(self, file_path: Path):
         """Execute sync with error handling"""

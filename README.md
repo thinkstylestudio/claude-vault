@@ -21,11 +21,12 @@ Claude Vault is a command-line tool that syncs your AI coding assistant conversa
 - ✅ **AI-Powered Tagging & Summarization**: Automatic generation of tags and summaries using local LLMs (Ollama) - no API costs
 - ✅ **Auto-Sync with Watch Mode**: Real-time syncing when conversation files change
 - ✅ **Semantic Search**: AI-powered search by meaning, not just keywords
+- ✅ **Vault-wide AI**: All AI features (retag, search, semantic search) work on all .md files in your vault
 - ✅ **Bi-directional sync**: Rename and move files freely - they stay in sync
 - ✅ **Smart updates**: Only syncs what's changed
 - ✅ **UUID tracking**: Maintains file relationships even after renaming
-- ✅ **Cross-Conversation Search**: Search across all conversations with context and navigate to related ones
-- ✅ **Smart Relationship Detection**: Automatically finds and links related conversations via common tags
+- ✅ **Cross-Conversation Search**: Search across all files with context and navigate to related ones
+- ✅ **Smart Relationship Detection**: Automatically finds and links related files via common tags
 
 ## How it Works
 
@@ -138,14 +139,23 @@ OpenCode stores conversations in a SQLite database at `~/.local/share/opencode/o
 ## Common Commands
 
 ```bash
-# Search conversations
+# Search all .md files in vault
 claude-vault search "python"
 
 # Search with tag filter
 claude-vault search "API" --tag code
 
-# Regenerate tags with AI
+# Limit search to specific folder
+claude-vault search "python" --path ~/Documents/ObsidianVault/projects
+
+# Regenerate tags for all .md files in vault
 claude-vault retag
+
+# Regenerate tags for specific folder
+claude-vault retag --path ~/Documents/ObsidianVault/projects
+
+# Force retag even for files with 3+ tags
+claude-vault retag --force
 
 # Verify vault integrity
 claude-vault verify
@@ -172,6 +182,9 @@ claude-vault watch-add ~/.local/share/opencode/opencode.db --source opencode
 # Start watching (stays in foreground with live updates)
 claude-vault watch
 
+# Start watching with auto-retag for .md file changes
+claude-vault watch --retag
+
 # Or run in background
 claude-vault watch &
 ```
@@ -191,7 +204,7 @@ claude-vault watch-remove ~/Downloads
 
 ## Semantic Search
 
-Find conversations by meaning, not just keywords:
+Find files by meaning, not just keywords:
 
 ```bash
 # Install embedding model (first time only)
@@ -212,6 +225,8 @@ claude-vault search "debugging" --mode auto
 # Adjust similarity threshold (0.0-1.0, default 0.5)
 claude-vault search "API" --mode semantic --threshold 0.7
 ```
+
+Semantic search generates embeddings for all .md files in your vault (skipping hidden directories).
 
 ## Troubleshooting
 
@@ -284,18 +299,18 @@ claude-vault verify --cleanup
 
 #### `search`
 
-Search across all conversations.
+Search across all .md files in vault.
 
 ```bash
-claude-vault search KEYWORD [--tag TAG] [--mode auto|semantic|keyword] [--threshold 0.5]
+claude-vault search KEYWORD [--tag TAG] [--mode auto|semantic|keyword] [--threshold 0.5] [--path PATH]
 ```
 
 #### `retag`
 
-Regenerate tags and summaries for conversations using AI.
+Regenerate tags and summaries for .md files using AI.
 
 ```bash
-claude-vault retag [--force] [--dry-run]
+claude-vault retag [--force] [--dry-run] [--path PATH]
 ```
 
 **Requirements:** Requires Ollama to be running with `llama3.2:3b` model installed.
@@ -315,6 +330,16 @@ Add a path to the watch list.
 ```bash
 claude-vault watch-add <path> [--source auto|web|code|opencode]
 ```
+
+#### `watch`
+
+Start watching for changes.
+
+```bash
+claude-vault watch [--retag]
+```
+
+The `--retag` option enables auto-retagging of .md files when they are modified.
 
 ### Getting Help
 

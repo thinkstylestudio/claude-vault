@@ -45,9 +45,9 @@ class StateManager:
                 chunk_text TEXT NOT NULL,
                 embedding BLOB NOT NULL,
                 embedding_model TEXT NOT NULL,
+                file_path TEXT,
                 created_at TEXT NOT NULL,
-                UNIQUE(conversation_uuid, chunk_index),
-                FOREIGN KEY (conversation_uuid) REFERENCES conversations(uuid)
+                UNIQUE(conversation_uuid, chunk_index)
             )
         """)
 
@@ -55,6 +55,12 @@ class StateManager:
             CREATE INDEX IF NOT EXISTS idx_embeddings_conv
             ON embeddings(conversation_uuid)
         """)
+
+        # Migration: Add file_path column to existing embeddings table
+        cursor.execute("PRAGMA table_info(embeddings)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if "file_path" not in columns:
+            cursor.execute("ALTER TABLE embeddings ADD COLUMN file_path TEXT")
 
         # Watch state table
         cursor.execute("""
@@ -210,6 +216,7 @@ class StateManager:
         chunk_text: str,
         embedding: np.ndarray,
         model: str,
+        file_path: str = "",
     ):
         """Save conversation chunk embedding"""
         conn = sqlite3.connect(self.db_path)
@@ -218,8 +225,8 @@ class StateManager:
         cursor.execute(
             """
             INSERT OR REPLACE INTO embeddings
-            (conversation_uuid, chunk_index, chunk_text, embedding, embedding_model, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            (conversation_uuid, chunk_index, chunk_text, embedding, embedding_model, file_path, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
             (
                 conversation_uuid,
@@ -227,6 +234,7 @@ class StateManager:
                 chunk_text,
                 embedding.tobytes(),
                 model,
+                file_path,
                 datetime.now().isoformat(),
             ),
         )
@@ -267,11 +275,13 @@ class StateManager:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
+        # Use LEFT JOIN to include files that aren't in conversations table
         cursor.execute("""
             SELECT e.conversation_uuid, e.chunk_index, e.chunk_text, e.embedding,
-                   c.file_path, c.metadata
+                   COALESCE(e.file_path, c.file_path, ''),
+                   COALESCE(c.metadata, '{}')
             FROM embeddings e
-            JOIN conversations c ON e.conversation_uuid = c.uuid
+            LEFT JOIN conversations c ON e.conversation_uuid = c.uuid
         """)
 
         rows = cursor.fetchall()

@@ -441,8 +441,11 @@ def search(
     # Keyword search (original implementation)
     results: List[Dict[str, Any]] = []
 
-    # Search through all markdown files
-    for md_file in conversations_dir.glob("*.md"):
+    # Search through all markdown files in vault
+    for md_file in vault_path.rglob("*.md"):
+        # Skip hidden directories
+        if any(part.startswith(".") for part in md_file.relative_to(vault_path).parts):
+            continue
         try:
             post = frontmatter.load(md_file)
 
@@ -475,7 +478,7 @@ def search(
 
     # Display results
     if results:
-        console.print(f"\n[green]Found in {len(results)} conversations:[/green]\n")
+        console.print(f"\n[green]Found in {len(results)} files:[/green]\n")
         for i, kw_result in enumerate(results, 1):
             console.print(
                 f"{i}. [{kw_result['file']}] {kw_result['title']} ({kw_result['match_count']} matches)"
@@ -524,12 +527,15 @@ def search(
 @app.command()
 def retag(
     vault_path: Optional[Path] = None,
+    path: Optional[Path] = typer.Option(
+        None, help="Limit retagging to a specific folder (default: entire vault)"
+    ),
     force: bool = typer.Option(False, help="Regenerate all tags, even existing ones"),
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Preview changes without applying them"
     ),
 ):
-    """Regenerate tags for conversations using AI"""
+    """Regenerate tags for markdown files using AI"""
 
     vault_path = vault_path or Path.cwd()
     tag_gen = OfflineTagGenerator()
@@ -545,7 +551,13 @@ def retag(
         console.print(f"Model needed: ollama pull {config.ollama.model}")
         raise typer.Exit(1)
 
-    conversations_dir = vault_path / "conversations"
+    # Determine scan root
+    scan_root = path if path else vault_path
+
+    if not scan_root.exists():
+        console.print(f"[red]✗ Path not found: {scan_root}[/red]")
+        raise typer.Exit(1)
+
     updated = 0
     details = []
 
@@ -554,9 +566,12 @@ def retag(
     else:
         console.print("[blue]Regenerating tags...[/blue]\n")
 
-    # Collect files to process
+    # Collect files to process - scan recursively, skip hidden dirs
     files_to_process = []
-    for md_file in conversations_dir.glob("*.md"):
+    for md_file in scan_root.rglob("*.md"):
+        # Skip hidden directories
+        if any(part.startswith(".") for part in md_file.relative_to(scan_root).parts):
+            continue
         try:
             post = frontmatter.load(md_file)
             # Skip if has good tags and not forcing
@@ -577,7 +592,7 @@ def retag(
         console=console,
     ) as progress:
         task = progress.add_task(
-            "[cyan]Processing conversations...", total=len(files_to_process)
+            "[cyan]Processing files...", total=len(files_to_process)
         )
 
         for md_file, post in files_to_process:
@@ -630,7 +645,7 @@ def retag(
 
     if dry_run:
         console.print(
-            f"\n[yellow]🔍 DRY RUN: Would update {updated} conversations[/yellow]\n"
+            f"\n[yellow]🔍 DRY RUN: Would update {updated} files[/yellow]\n"
         )
 
         if details:
@@ -655,7 +670,7 @@ def retag(
             "\n[yellow]💡 Run without --dry-run to apply these changes[/yellow]"
         )
     else:
-        console.print(f"\n[green]Updated {updated} conversations[/green]")
+        console.print(f"\n[green]Updated {updated} files[/green]")
 
 
 @app.command()
@@ -672,7 +687,12 @@ def config():
 
 
 @app.command()
-def watch(vault_path: Optional[Path] = None):
+def watch(
+    vault_path: Optional[Path] = None,
+    retag: bool = typer.Option(
+        False, "--retag", help="Auto-retag .md files when they change"
+    ),
+):
     """Start watching for conversation changes"""
 
     vault_path = vault_path or Path.cwd()
@@ -683,7 +703,7 @@ def watch(vault_path: Optional[Path] = None):
         console.print("[yellow]Run 'claude-vault init' first[/yellow]")
         raise typer.Exit(1)
 
-    watch_manager = WatchManager(vault_path)
+    watch_manager = WatchManager(vault_path, retag_on_change=retag)
 
     try:
         watch_manager.start()

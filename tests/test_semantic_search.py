@@ -49,11 +49,7 @@ def search_engine(temp_vault):
         mock_state_class.return_value = mock_state
 
         # Mock the state methods
-        mock_state.get_all_conversations.return_value = [
-            {"uuid": "test-123"},
-            {"uuid": "test-456"},
-        ]
-        mock_state.get_embeddings_for_conversation.return_value = []
+        mock_state.get_all_embeddings.return_value = []
 
         engine = SemanticSearchEngine(temp_vault)
         engine.state = mock_state
@@ -241,14 +237,10 @@ def test_search_result_structure(search_engine, temp_vault):
 
 def test_ensure_embeddings_exist_all_present(search_engine, temp_vault):
     """Test ensure_embeddings when all exist"""
-    # Mock that all conversations have embeddings
-    search_engine.state.get_all_conversations.return_value = [
-        {"uuid": "test-123"},
-        {"uuid": "test-456"},
-    ]
-
-    search_engine.state.get_embeddings_for_conversation.return_value = [
-        {"chunk_index": 0, "embedding": np.array([0.1, 0.2])}
+    # Mock that all files have embeddings (by file path)
+    search_engine.state.get_all_embeddings.return_value = [
+        {"file_path": str(temp_vault / "conversations" / "python-async.md")},
+        {"file_path": str(temp_vault / "conversations" / "flask-basics.md")},
     ]
 
     with patch("claude_vault.semantic_search.console") as mock_console:
@@ -256,49 +248,27 @@ def test_ensure_embeddings_exist_all_present(search_engine, temp_vault):
 
         # Should print success message
         mock_console.print.assert_called_once()
-        assert "All conversations have embeddings" in str(mock_console.print.call_args)
+        assert "All files have embeddings" in str(mock_console.print.call_args)
 
 
 def test_ensure_embeddings_exist_generates_missing(search_engine, temp_vault):
-    """Test ensure_embeddings generates for missing conversations"""
-    # Mock that one conversation is missing embeddings
-    search_engine.state.get_all_conversations.return_value = [
-        {"uuid": "test-123"},
-        {"uuid": "test-456"},
+    """Test ensure_embeddings generates for missing files"""
+    # Mock that one file has embeddings (python-async.md)
+    search_engine.state.get_all_embeddings.return_value = [
+        {"file_path": str(temp_vault / "conversations" / "python-async.md")},
     ]
 
-    def mock_get_embeddings(uuid):
-        if uuid == "test-123":
-            return [{"chunk_index": 0}]
-        return []
-
-    search_engine.state.get_embeddings_for_conversation.side_effect = (
-        mock_get_embeddings
-    )
-
     with patch.object(search_engine, "_generate_embeddings_for_file") as mock_generate:
-        with patch("claude_vault.semantic_search.frontmatter.load") as mock_load:
-            # Return different posts for different files
-            def mock_load_fn(path):
-                if "python-async" in str(path):
-                    return frontmatter.Post(
-                        content="test", uuid="test-123", title="Python Async"
-                    )
-                else:
-                    return frontmatter.Post(
-                        content="test", uuid="test-456", title="Flask Basics"
-                    )
+        search_engine.ensure_embeddings_exist()
 
-            mock_load.side_effect = mock_load_fn
-
-            search_engine.ensure_embeddings_exist()
-
-            # Should generate embeddings for test-456 only
-            assert mock_generate.call_count >= 1
+        # Should generate embeddings for flask-basics.md only
+        assert mock_generate.call_count >= 1
 
 
-def test_generate_embeddings_for_file(search_engine):
+def test_generate_embeddings_for_file(search_engine, tmp_path):
     """Test embedding generation for a single file"""
+    # Create a test markdown file
+    md_file = tmp_path / "test-conversation.md"
     post = frontmatter.Post(
         content="## 👤 You\n\nTest question\n\n---\n\n## 🤖 Claude\n\nTest answer",
         uuid="test-123",
@@ -306,13 +276,14 @@ def test_generate_embeddings_for_file(search_engine):
         tags=["test"],
         date="2024-01-01",
     )
+    md_file.write_text(frontmatter.dumps(post))
 
     mock_embedding = [0.1, 0.2, 0.3]
 
     with patch.object(
         search_engine.generator, "generate_embedding", return_value=mock_embedding
     ):
-        search_engine._generate_embeddings_for_file("test-123", post)
+        search_engine._generate_embeddings_for_file(md_file)
 
         # Should save embeddings
         assert search_engine.state.save_embedding.called

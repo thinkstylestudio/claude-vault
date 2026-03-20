@@ -156,58 +156,69 @@ class SemanticSearchEngine:
         return results
 
     def ensure_embeddings_exist(self):
-        """Generate embeddings for conversations that don't have them"""
-        conversations_dir = self.vault_path / "conversations"
-        if not conversations_dir.exists():
-            console.print("[yellow]⚠ No conversations directory found[/yellow]")
+        """Generate embeddings for files that don't have them"""
+        # Get all markdown files in vault, skip hidden directories
+        md_files = []
+        for md_file in self.vault_path.rglob("*.md"):
+            if any(part.startswith(".") for part in md_file.relative_to(self.vault_path).parts):
+                continue
+            md_files.append(md_file)
+
+        if not md_files:
+            console.print("[yellow]⚠ No markdown files found in vault[/yellow]")
             return
 
-        # Get all conversation files
-        md_files = list(conversations_dir.glob("*.md"))
+        # Get files with embeddings (by file path)
+        files_with_embeddings = set()
+        all_embeddings = self.state.get_all_embeddings()
+        for emb in all_embeddings:
+            files_with_embeddings.add(emb.get("file_path", ""))
 
-        # Get conversations without embeddings
-        all_convs = self.state.get_all_conversations()
-        conv_with_embeddings = set()
-
-        for conv in all_convs:
-            embeddings = self.state.get_embeddings_for_conversation(conv["uuid"])
-            if embeddings:
-                conv_with_embeddings.add(conv["uuid"])
-
-        # Find conversations that need embeddings
+        # Find files that need embeddings
         needs_embedding = []
         for md_file in md_files:
-            post = frontmatter.load(md_file)
-            uuid = post.get("uuid")
-            if uuid and uuid not in conv_with_embeddings:
-                needs_embedding.append((uuid, md_file, post))
+            if str(md_file) not in files_with_embeddings:
+                needs_embedding.append(md_file)
 
         if not needs_embedding:
-            console.print("[green]✓ All conversations have embeddings[/green]")
+            console.print("[green]✓ All files have embeddings[/green]")
             return
 
         console.print(
-            f"[yellow]Generating embeddings for {len(needs_embedding)} conversations...[/yellow]"
+            f"[yellow]Generating embeddings for {len(needs_embedding)} files...[/yellow]"
         )
 
         with Progress() as progress:
             task = progress.add_task("Embedding...", total=len(needs_embedding))
 
-            for uuid, _md_file, post in needs_embedding:
-                self._generate_embeddings_for_file(uuid, post)
+            for md_file in needs_embedding:
+                self._generate_embeddings_for_file(md_file)
                 progress.advance(task)
 
         console.print("[green]✓ Embeddings generated successfully![/green]")
 
-    def _generate_embeddings_for_file(self, uuid: str, post: frontmatter.Post):
-        """Generate embeddings for a single conversation file"""
+    def _generate_embeddings_for_file(self, md_file: Path):
+        """Generate embeddings for a single markdown file"""
+        import uuid as uuid_module
+
         from claude_vault.models import Conversation, Message
 
+        try:
+            post = frontmatter.load(md_file)
+        except Exception:
+            return
+
+        # Use uuid from frontmatter or generate one from file path
+        file_uuid = post.get("uuid")
+        if not file_uuid:
+            # Generate deterministic UUID from file path
+            file_uuid = str(uuid_module.uuid5(uuid_module.NAMESPACE_URL, str(md_file)))
+
         # Build conversation object
-        title = post.get("title", "")
+        title = post.get("title", md_file.stem)
         content = post.content
 
-        # Parse messages from markdown
+        # Parse messages from markdown (conversation format)
         messages = []
         current_role = None
         current_content: List[str] = []
@@ -244,9 +255,13 @@ class SemanticSearchEngine:
                 Message(role=current_role, content="\n".join(current_content).strip())
             )
 
+        # Handle non-conversation files (no messages parsed)
+        if not messages:
+            messages = [Message(role="human", content=content)]
+
         # Create conversation object
         conversation = Conversation(
-            id=uuid,
+            id=file_uuid,
             title=title,
             messages=messages,
             created_at=post.get("date"),
@@ -264,9 +279,10 @@ class SemanticSearchEngine:
             if embedding:
                 embedding_array = np.array(embedding, dtype=np.float32)
                 self.state.save_embedding(
-                    conversation_uuid=uuid,
+                    conversation_uuid=file_uuid,
                     chunk_index=chunk["chunk_index"],
                     chunk_text=chunk["text"][:500],  # Store preview
                     embedding=embedding_array,
                     model=self.generator.model,
+                    file_path=str(md_file),
                 )
