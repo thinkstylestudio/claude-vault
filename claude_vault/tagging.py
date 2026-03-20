@@ -16,7 +16,6 @@ class OfflineTagGenerator:
     def is_available(self) -> bool:
         """Check if Ollama is running"""
         try:
-            # Parse base URL
             base_url = self.ollama_url.split("/api")[0]
             response = requests.get(base_url, timeout=2)
             return response.status_code == 200
@@ -25,39 +24,26 @@ class OfflineTagGenerator:
 
     def generate_metadata(self, conversation: Conversation) -> dict:
         """
-        Generate relevant tags and a brief summary for a conversation
+        Generate relevant tags and summary for any markdown content
         Uses LLM if available, falls back to keyword extraction
         """
-
         if not self.is_available():
-            print("⚠️  Ollama not running. Using keyword extraction fallback.")
             return self._fallback_metadata(conversation)
 
-        # Create focused prompt with conversation context
-        first_msg = (
-            conversation.messages[0].content[:400] if conversation.messages else ""
-        )
-        last_msg = (
-            conversation.messages[-1].content[:400]
-            if len(conversation.messages) > 1
-            else ""
-        )
+        # Get content for analysis
+        title = conversation.title
+        content = ""
+        for msg in conversation.messages:
+            content += msg.content + "\n"
+        content = content[:2000]
 
-        prompt = f"""You are a conversation analyzer. Analyze this conversation and output a JSON object with tags and a summary.
+        # Detect if this is a conversation or a regular note
+        is_conversation = "## 👤 You" in content or "## 🤖 Claude" in content
 
-        Title: {conversation.title}
-        First message: {first_msg}
-        Last message: {last_msg}
-
-        CRITICAL RULES:
-        - Output MUST be valid JSON
-        - Format: {{"tags": ["tag1", "tag2"], "summary": "One sentence summary"}}
-        - Tags: 3-5 lowercase tags, no spaces, specific to content
-        - Summary: 1-2 sentence summary of the main topic or insight
-        - No markdown formatting (no ```json code blocks)
-
-        Example output:
-        {{"tags": ["python", "api", "error-handling"], "summary": "The user is debugging a ConnectionError in their Python API client and learning about retry logic."}}"""
+        if is_conversation:
+            prompt = self._conversation_prompt(title, content)
+        else:
+            prompt = self._note_prompt(title, content)
 
         try:
             response = requests.post(
@@ -66,10 +52,10 @@ class OfflineTagGenerator:
                     "model": self.config.ollama.model,
                     "prompt": prompt,
                     "stream": False,
-                    "format": "json",  # Force JSON mode if model supports it
+                    "format": "json",
                     "options": {
                         "temperature": self.config.ollama.temperature,
-                        "num_predict": 150,
+                        "num_predict": 200,
                         "top_p": 0.9,
                     },
                 },
@@ -80,18 +66,15 @@ class OfflineTagGenerator:
                 response_json = response.json()
                 content = response_json.get("response", "").strip()
 
-                # Check if it's already a dict (some Ollama versions/wrappers might parse it)
                 if isinstance(content, dict):
                     return self._validate_metadata(content)
 
-                # Parse JSON string
                 import json
 
                 try:
                     data = json.loads(content)
                     return self._validate_metadata(data)
                 except json.JSONDecodeError:
-                    # Fallback if valid JSON wasn't returned
                     tags = self._parse_tags(content)
                     return {"tags": tags[:5], "summary": None}
 
@@ -102,20 +85,59 @@ class OfflineTagGenerator:
 
         return self._fallback_metadata(conversation)
 
+    def _conversation_prompt(self, title: str, content: str) -> str:
+        """Prompt for conversation-style content"""
+        return f"""Analyze this conversation and output JSON with relevant tags and a summary.
+
+Title: {title}
+Content: {content[:800]}
+
+RULES:
+- Output valid JSON only: {{"tags": ["tag1", "tag2"], "summary": "Brief summary"}}
+- Tags: 3-5 specific lowercase tags about the TOPICS discussed
+- Focus on: programming languages, frameworks, tools, concepts, problems solved
+- Do NOT use meta-tags like "conversation-analysis" or "natural-language-processing"
+- Summary: 1-2 sentences about what was discussed or solved
+
+Example: {{"tags": ["python", "flask", "authentication", "jwt"], "summary": "Discussion about implementing JWT authentication in a Flask API."}}"""
+
+    def _note_prompt(self, title: str, content: str) -> str:
+        """Prompt for regular markdown notes"""
+        return f"""Analyze this note and output JSON with relevant tags and a summary.
+
+Title: {title}
+Content: {content[:800]}
+
+RULES:
+- Output valid JSON only: {{"tags": ["tag1", "tag2"], "summary": "Brief summary"}}
+- Tags: 3-5 specific lowercase tags about the ACTUAL CONTENT topics
+- Look for: existing hashtags (#job #sales), technologies (React, Laravel), activities
+- Do NOT use generic tags like "notes", "markdown", "general", "conversation-analysis"
+- Summary: 1-2 sentences about what this note contains
+
+Example: {{"tags": ["react", "performance", "job-search", "spanish", "sales"], "summary": "Job listings for React roles, Spanish vocabulary notes, and sales tips."}}"""
+
     def _validate_metadata(self, data: dict) -> dict:
         """Validate and clean metadata"""
         tags = data.get("tags", [])
         summary = data.get("summary")
 
-        # Clean tags
+        # Bad tags to reject
+        bad_tags = {
+            "conversation-analysis", "natural-language-processing", "dialogue-interpretation",
+            "dialogue-modeling", "text-summarization", "conversation-analyzer",
+            "output-format", "debugging", "notes", "markdown", "general", "content",
+        }
+
         valid_tags = []
         if isinstance(tags, list):
             for tag in tags:
                 if isinstance(tag, str):
                     tag = tag.strip().lower()
-                    # Only keep reasonable tags
-                    if 2 <= len(tag) <= 30 and all(
-                        c.isalnum() or c in ["-", "_"] for c in tag
+                    if (
+                        2 <= len(tag) <= 30
+                        and all(c.isalnum() or c in ["-", "_"] for c in tag)
+                        and tag not in bad_tags
                     ):
                         valid_tags.append(tag)
 
@@ -123,7 +145,6 @@ class OfflineTagGenerator:
 
     def _parse_tags(self, tags_text: str) -> List[str]:
         """Legacy helper for parsing simple tag lists"""
-        # Remove common prefixes
         tags_text = tags_text.replace("Your tags (comma-separated):", "").replace(
             "tags:", ""
         )
@@ -135,10 +156,8 @@ class OfflineTagGenerator:
         )
         tags_text = tags_text.strip()
 
-        # Split by comma
         tags = [tag.strip().lower() for tag in tags_text.split(",")]
 
-        # Filter out invalid tags
         valid_tags = []
         for tag in tags:
             tag = tag.strip(".\"'")
@@ -154,8 +173,8 @@ class OfflineTagGenerator:
     def _fallback_tags(self, conversation: Conversation) -> List[str]:
         """Simple keyword extraction as fallback when LLM unavailable"""
         keywords = {
-            "python": ["python", "py", "django", "flask"],
-            "javascript": ["javascript", "js", "react", "node", "npm"],
+            "python": ["python", "py", "django", "flask", "pip"],
+            "javascript": ["javascript", "js", "react", "node", "npm", "typescript"],
             "api": ["api", "rest", "graphql", "endpoint"],
             "debugging": ["debug", "error", "bug", "fix", "issue"],
             "code": ["code", "coding", "programming", "development"],
@@ -167,18 +186,28 @@ class OfflineTagGenerator:
             "web": ["web", "website", "html", "css"],
             "machine-learning": ["ml", "machine learning", "ai", "model"],
             "testing": ["test", "testing", "qa", "unit test"],
+            "laravel": ["laravel", "eloquent", "artisan"],
+            "wordpress": ["wordpress", "wp", "woocommerce"],
+            "react": ["react", "jsx", "component", "hooks"],
+            "vue": ["vue", "vuex", "nuxt"],
+            "docker": ["docker", "container", "dockerfile"],
+            "git": ["git", "github", "commit", "branch"],
+            "sales": ["sales", "selling", "leads", "prospects"],
+            "habits": ["habit", "routine", "daily", "morning"],
+            "spanish": ["spanish", "español", "adiós", "dios"],
+            "job": ["job", "career", "hiring", "interview", "resume", "#job"],
+            "links": ["http", "youtube", "link", "url"],
+            "wordpress-dev": ["wordpress", "wp-", "plugin", "theme"],
         }
 
-        # Merge with custom keywords from config
         if self.config.custom_keywords:
             keywords.update(self.config.custom_keywords)
 
         title_lower = conversation.title.lower()
-        content_lower = (
-            conversation.messages[0].content[:500].lower()
-            if conversation.messages
-            else ""
-        )
+        content_lower = ""
+        for msg in conversation.messages:
+            content_lower += msg.content[:500].lower() + " "
+
         combined = f"{title_lower} {content_lower}"
 
         tags = []
@@ -186,4 +215,4 @@ class OfflineTagGenerator:
             if any(pattern in combined for pattern in patterns):
                 tags.append(tag)
 
-        return tags[:5] if tags else ["general"]
+        return tags[:5] if tags else ["notes"]
