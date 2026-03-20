@@ -132,16 +132,29 @@ Output only JSON."""
             summary = re.sub(r'Your operational mode.*', '', summary, flags=re.DOTALL)
             summary = re.sub(r'You are no longer.*', '', summary, flags=re.DOTALL)
             summary = re.sub(r'You are permitted.*', '', summary, flags=re.DOTALL)
-            # Remove common hallucinated prefixes
-            summary = re.sub(r'^(One sentence about|Note contains|What this contains|Notes about)', '', summary)
-            # Clean up whitespace
-            summary = summary.strip()
-            # Truncate if too long
-            if len(summary) > 200:
-                summary = summary[:197] + "..."
-            # Skip if empty after cleaning
-            if not summary or summary in ["", "One sentence about what this contains"]:
-                summary = None
+            # Remove hallucinated prompt instructions - entire phrases
+            bad_phrases = [
+                r'^One sentence about what this contains\.?$',
+                r'^Note contains.*$',
+                r'^What this contains\.?$',
+                r'^Notes about a project\.?$',
+                r'^Notes?\.?$',
+                r'^Summary.*$',
+            ]
+            for pattern in bad_phrases:
+                if re.match(pattern, summary, re.IGNORECASE):
+                    summary = None
+                    break
+            
+            if summary:
+                # Clean up whitespace
+                summary = summary.strip()
+                # Truncate if too long
+                if len(summary) > 200:
+                    summary = summary[:197] + "..."
+                # Skip if empty after cleaning
+                if not summary:
+                    summary = None
 
         # Bad tags to reject
         bad_tags = {
