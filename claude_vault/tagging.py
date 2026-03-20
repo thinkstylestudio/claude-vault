@@ -24,18 +24,18 @@ class OfflineTagGenerator:
 
     def generate_metadata(self, conversation: Conversation) -> dict:
         """
-        Generate relevant tags and summary for any markdown content
-        Uses LLM if available, falls back to keyword extraction
+        Generate tags and summary using LLM.
+        Falls back to simple extraction if Ollama unavailable.
         """
         if not self.is_available():
             return self._fallback_metadata(conversation)
 
-        # Get content for analysis
+        # Get full content - let LLM see everything
         title = conversation.title
         content = ""
         for msg in conversation.messages:
             content += msg.content + "\n"
-        content = content[:2000]
+        content = content[:3000]
 
         # Detect if this is a conversation or a regular note
         is_conversation = "## 👤 You" in content or "## 🤖 Claude" in content
@@ -54,75 +54,62 @@ class OfflineTagGenerator:
                     "stream": False,
                     "format": "json",
                     "options": {
-                        "temperature": self.config.ollama.temperature,
+                        "temperature": 0.3,
                         "num_predict": 200,
-                        "top_p": 0.9,
                     },
                 },
                 timeout=self.config.ollama.timeout,
             )
 
             if response.status_code == 200:
-                response_json = response.json()
-                content = response_json.get("response", "").strip()
-
-                if isinstance(content, dict):
-                    return self._validate_metadata(content)
-
                 import json
 
+                response_json = response.json()
+                raw = response_json.get("response", "").strip()
+
                 try:
-                    data = json.loads(content)
+                    data = json.loads(raw)
                     return self._validate_metadata(data)
                 except json.JSONDecodeError:
-                    tags = self._parse_tags(content)
-                    return {"tags": tags[:5], "summary": None}
+                    return self._fallback_metadata(conversation)
 
-        except requests.exceptions.Timeout:
-            print("⚠️  Ollama request timed out. Using fallback.")
-        except Exception as e:
-            print(f"⚠️  Error generating metadata: {e}. Using fallback.")
+        except Exception:
+            pass
 
         return self._fallback_metadata(conversation)
 
     def _conversation_prompt(self, title: str, content: str) -> str:
         """Prompt for conversation-style content"""
-        return f"""Look at this conversation. Generate tags from the ACTUAL topics discussed.
+        return f"""Generate tags from this conversation. Look at what was ACTUALLY discussed.
 
 Title: {title}
 Content:
-{content[:800]}
+{content[:2000]}
 
-Output JSON:
-{{"tags": ["tag1", "tag2"], "summary": "What was discussed"}}
+Output JSON: {{"tags": ["tag1", "tag2"], "summary": "What was discussed"}}
 
-Rules:
-- Tags MUST come from actual content - what languages, tools, problems are mentioned?
-- 3-5 tags, lowercase, hyphenated if needed
-- Summary: what did this conversation cover?
-
-Output only the JSON, nothing else."""
+Look for: languages, frameworks, tools, problems solved, topics.
+Never use generic tags like "conversation-analysis" or "natural-language-processing".
+Output only JSON."""
 
     def _note_prompt(self, title: str, content: str) -> str:
         """Prompt for regular markdown notes"""
-        return f"""Look at this note. Generate tags from the ACTUAL content.
+        return f"""Generate tags from this note. Look at what's ACTUALLY in it.
 
 Title: {title}
 Content:
-{content[:800]}
+{content[:2000]}
 
-Output JSON:
-{{"tags": ["tag1", "tag2"], "summary": "What this note contains"}}
+Output JSON: {{"tags": ["tag1", "tag2"], "summary": "What this contains"}}
 
-Rules:
-- Extract tags from what's ACTUALLY in the note - projects, tech, topics, hashtags
-- If there are #hashtags in the content, include them as tags
-- If specific tech is mentioned (React, Laravel, WordPress), tag it
-- If it's about a project, tag with project name
-- 3-5 tags, lowercase
-- Summary: what does this note actually contain?
+Look for:
+- Hashtags (#example) - include as tags
+- Technologies mentioned (WordPress, Laravel, React, ACF, PHP, etc)
+- Project names
+- Key topics
 
-Output only the JSON, nothing else."""
+Never use generic tags like "conversation-analysis", "natural-language-processing", "notes".
+Output only JSON."""
 
     def _validate_metadata(self, data: dict) -> dict:
         """Validate and clean metadata"""
@@ -134,13 +121,15 @@ Output only the JSON, nothing else."""
             "conversation-analysis", "natural-language-processing", "dialogue-interpretation",
             "dialogue-modeling", "text-summarization", "conversation-analyzer",
             "output-format", "debugging", "notes", "markdown", "general", "content",
+            "text-processing", "dialogue-understanding", "dialogue-summarization",
+            "dialogue-system", "dialogue-patterns", "conversation", "analysis",
         }
 
         valid_tags = []
         if isinstance(tags, list):
             for tag in tags:
                 if isinstance(tag, str):
-                    tag = tag.strip().lower()
+                    tag = tag.strip().lower().lstrip("#")
                     if (
                         2 <= len(tag) <= 30
                         and all(c.isalnum() or c in ["-", "_"] for c in tag)
@@ -150,111 +139,20 @@ Output only the JSON, nothing else."""
 
         return {"tags": valid_tags[:5], "summary": str(summary) if summary else None}
 
-    def _parse_tags(self, tags_text: str) -> List[str]:
-        """Legacy helper for parsing simple tag lists"""
-        tags_text = tags_text.replace("Your tags (comma-separated):", "").replace(
-            "tags:", ""
-        )
-        tags_text = (
-            tags_text.replace("{", "")
-            .replace("}", "")
-            .replace("[", "")
-            .replace("]", "")
-        )
-        tags_text = tags_text.strip()
-
-        tags = [tag.strip().lower() for tag in tags_text.split(",")]
-
-        valid_tags = []
-        for tag in tags:
-            tag = tag.strip(".\"'")
-            if 2 <= len(tag) <= 25 and all(c.isalnum() or c in ["-", "_"] for c in tag):
-                valid_tags.append(tag)
-
-        return valid_tags
-
     def _fallback_metadata(self, conversation: Conversation) -> dict:
-        """Fallback when LLM unavailable"""
-        return {"tags": self._fallback_tags(conversation), "summary": None}
-
-    def _fallback_tags(self, conversation: Conversation) -> List[str]:
-        """Extract tags from actual content - hashtags, tech terms, project names"""
+        """Simple fallback when Ollama unavailable - just extract hashtags"""
         import re
 
         tags = []
-
-        # Get full content
         full_content = conversation.title + " "
         for msg in conversation.messages:
             full_content += msg.content + " "
 
-        # Extract existing hashtags from content (#work_log, #job, etc)
+        # Extract hashtags
         hashtags = re.findall(r'#(\w+)', full_content)
         for tag in hashtags:
-            tag = tag.lower().strip()
-            if 2 <= len(tag) <= 30 and tag not in tags:
+            tag = tag.lower()
+            if tag not in tags:
                 tags.append(tag)
 
-        # Extract tech/framework mentions from content
-        tech_patterns = [
-            r'\b(react|reactjs)\b',
-            r'\b(laravel)\b',
-            r'\b(wordpress|wp)\b',
-            r'\b(python)\b',
-            r'\b(javascript|js)\b',
-            r'\b(typescript|ts)\b',
-            r'\b(docker)\b',
-            r'\b(vue|vuejs)\b',
-            r'\b(node|nodejs)\b',
-            r'\b(sql|mysql|postgres)\b',
-            r'\b(api|rest|graphql)\b',
-            r'\b(git|github)\b',
-            r'\b(php)\b',
-            r'\b(symfony)\b',
-            r'\b(oauth)\b',
-            r'\b(aws)\b',
-            r'\b(golang|go)\b',
-            r'\b(ruby|rails)\b',
-            r'\b(jenkins)\b',
-            r'\b(nginx)\b',
-            r'\b(redis)\b',
-            r'\b(mongodb)\b',
-            r'\b(kubernetes|k8s)\b',
-            r'\b(ci/cd|cicd)\b',
-            r'\b(microservice)\b',
-            r'\b(cache|caching)\b',
-            r'\b(deploy|deployment)\b',
-            r'\b(queue|jobs)\b',
-            r'\b(lando)\b',
-            r'\b(minio)\b',
-            r'\b(frankenphp)\b',
-            r'\b(jira)\b',
-        ]
-
-        content_lower = full_content.lower()
-        for pattern in tech_patterns:
-            matches = re.findall(pattern, content_lower)
-            for match in matches:
-                tag = match.lower().strip()
-                if tag not in tags:
-                    tags.append(tag)
-
-        # Extract project/company names (look for patterns like "At CompanyName" or "### CompanyName")
-        company_pattern = r'(?:at|for|#)\s*([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*)'
-        companies = re.findall(company_pattern, full_content)
-        for company in companies[:2]:
-            tag = company.lower().replace(' ', '-')
-            if tag not in tags and len(tag) <= 20:
-                tags.append(tag)
-
-        # If still no tags, use significant words from title
-        if not tags:
-            title_words = conversation.title.lower().split()
-            # Filter out common words
-            skip = {"the", "a", "an", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had", "do", "does", "did", "will", "would", "could", "should", "may", "might", "can", "shall"}
-            for word in title_words:
-                word = word.strip(".,!?;:")
-                if word not in skip and len(word) > 2:
-                    tags.append(word)
-
-        return tags[:5]
+        return {"tags": tags[:5], "summary": None}

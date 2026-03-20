@@ -53,17 +53,17 @@ def test_generate_metadata_success(tag_generator, mock_conversation):
 
 def test_generate_metadata_invalid_json_fallback(tag_generator, mock_conversation):
     """Test fallback when LLM returns invalid JSON"""
-    # LLM returns just comma-separated text instead of JSON
+    # LLM returns invalid JSON - should fall back to hashtag extraction
     mock_response = Mock()
     mock_response.status_code = 200
-    mock_response.json.return_value = {"response": "python, raw-text, formatting"}
+    mock_response.json.return_value = {"response": "this is not json"}
 
     with patch("requests.post", return_value=mock_response):
         with patch("requests.get", return_value=Mock(status_code=200)):
             result = tag_generator.generate_metadata(mock_conversation)
 
-            assert "python" in result["tags"]
-            assert "raw-text" in result["tags"]
+            # Falls back to hashtag extraction (no hashtags in mock content)
+            assert result["tags"] == []
             assert result["summary"] is None
 
 
@@ -72,8 +72,8 @@ def test_generate_metadata_service_unavailable(tag_generator, mock_conversation)
     with patch("requests.get", side_effect=Exception("Connection refused")):
         result = tag_generator.generate_metadata(mock_conversation)
 
-        # Should fall back to keyword extraction from title
-        assert len(result["tags"]) > 0
+        # Falls back to hashtag extraction (no hashtags in mock content)
+        assert result["tags"] == []
         assert result["summary"] is None
 
 
