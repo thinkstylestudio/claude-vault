@@ -104,15 +104,25 @@ class OpenCodeParser:
 
         content_parts = []
         for part_row in parts_rows:
-            part_data = json.loads(part_row["data"])
-            part_text = self._extract_part_content(part_data)
-            if part_text:
-                content_parts.append(part_text)
+            try:
+                part_data = json.loads(part_row["data"])
+                part_text = self._extract_part_content(part_data)
+                if part_text:
+                    content_parts.append(part_text)
+            except (json.JSONDecodeError, UnicodeDecodeError, Exception) as e:
+                print(f"Warning: Failed to parse part {part_row['id']}: {e}")
+                continue
 
         if not content_parts:
             return None
 
         content = "\n\n".join(content_parts)
+
+        # Ensure content is valid UTF-8
+        try:
+            content = content.encode("utf-8", errors="replace").decode("utf-8")
+        except Exception:
+            pass
 
         # Map role to claude-vault format
         if role == "user":
@@ -131,7 +141,10 @@ class OpenCodeParser:
         part_type = part_data.get("type")
 
         if part_type == "text":
-            text = part_data.get("text", "").strip()
+            text = part_data.get("text", "")
+            if isinstance(text, bytes):
+                text = text.decode("utf-8", errors="replace")
+            text = text.strip()
             return text if text else None
 
         if part_type == "tool":
@@ -140,9 +153,18 @@ class OpenCodeParser:
             tool_input = state.get("input", {})
             tool_output = state.get("output", "")
 
+            # Ensure tool_output is a string
+            if isinstance(tool_output, bytes):
+                tool_output = tool_output.decode("utf-8", errors="replace")
+            elif not isinstance(tool_output, str):
+                tool_output = str(tool_output)
+
             lines = [f"**[Tool: {tool_name}]**"]
             if tool_input:
-                lines.append(f"```json\n{json.dumps(tool_input, indent=2)}\n```")
+                try:
+                    lines.append(f"```json\n{json.dumps(tool_input, indent=2)}\n```")
+                except (TypeError, ValueError):
+                    lines.append(f"```\n{tool_input}\n```")
             if tool_output:
                 # Truncate long outputs
                 output_preview = (
@@ -154,7 +176,10 @@ class OpenCodeParser:
             return "\n".join(lines)
 
         if part_type == "reasoning":
-            text = part_data.get("text", "").strip()
+            text = part_data.get("text", "")
+            if isinstance(text, bytes):
+                text = text.decode("utf-8", errors="replace")
+            text = text.strip()
             if text:
                 return f"**[Reasoning]**\n\n{text}"
             return None
