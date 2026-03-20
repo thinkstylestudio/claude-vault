@@ -69,7 +69,7 @@ class OfflineTagGenerator:
 
                 try:
                     data = json.loads(raw)
-                    return self._validate_metadata(data)
+                    return self._validate_metadata(data, content)
                 except json.JSONDecodeError:
                     return self._fallback_metadata(conversation)
 
@@ -115,7 +115,7 @@ RULES:
 
 Output only JSON."""
 
-    def _validate_metadata(self, data: dict) -> dict:
+    def _validate_metadata(self, data: dict, content: str = "") -> dict:
         """Validate and clean metadata"""
         tags = data.get("tags", [])
         summary = data.get("summary")
@@ -142,11 +142,11 @@ Output only JSON."""
                     ):
                         valid_tags.append(tag)
 
-        # If no valid tags, extract hashtags from summary as fallback
-        if not valid_tags and summary:
+        # If no valid tags, extract hashtags from original content
+        if not valid_tags and content:
             import re
-            hashtags = re.findall(r'#(\w+)', str(summary))
-            valid_tags = [h.lower() for h in hashtags[:5]]
+            hashtags = re.findall(r'#(\w+)', content)
+            valid_tags = list(dict.fromkeys([h.lower() for h in hashtags]))[:5]
 
         return {"tags": valid_tags[:5], "summary": str(summary) if summary else None}
 
