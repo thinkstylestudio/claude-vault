@@ -120,6 +120,25 @@ Output only JSON."""
         tags = data.get("tags", [])
         summary = data.get("summary")
 
+        # Clean summary - remove HTML tags, system reminders, artifacts
+        if summary:
+            import re
+            summary = str(summary)
+            # Remove HTML tags
+            summary = re.sub(r'<[^>]+>', '', summary)
+            # Remove system reminders and other artifacts
+            summary = re.sub(r'Your operational mode.*', '', summary, flags=re.DOTALL)
+            summary = re.sub(r'You are no longer.*', '', summary, flags=re.DOTALL)
+            summary = re.sub(r'You are permitted.*', '', summary, flags=re.DOTALL)
+            # Clean up whitespace
+            summary = summary.strip()
+            # Truncate if too long
+            if len(summary) > 200:
+                summary = summary[:197] + "..."
+            # Skip if empty after cleaning
+            if not summary:
+                summary = None
+
         # Bad tags to reject
         bad_tags = {
             "conversation-analysis", "natural-language-processing", "dialogue-interpretation",
