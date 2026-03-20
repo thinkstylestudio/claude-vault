@@ -124,19 +124,23 @@ Output only JSON."""
         if summary:
             import re
             summary = str(summary)
-            # Remove HTML tags
+            # Remove HTML/system tags
             summary = re.sub(r'<[^>]+>', '', summary)
-            # Remove system reminders and other artifacts
+            # Remove anything after system-reminder patterns
+            summary = re.sub(r'\[?system-reminder\]?.*', '', summary, flags=re.IGNORECASE)
+            # Remove operational mode changes
             summary = re.sub(r'Your operational mode.*', '', summary, flags=re.DOTALL)
             summary = re.sub(r'You are no longer.*', '', summary, flags=re.DOTALL)
             summary = re.sub(r'You are permitted.*', '', summary, flags=re.DOTALL)
+            # Remove common hallucinated prefixes
+            summary = re.sub(r'^(One sentence about|Note contains|What this contains|Notes about)', '', summary)
             # Clean up whitespace
             summary = summary.strip()
             # Truncate if too long
             if len(summary) > 200:
                 summary = summary[:197] + "..."
             # Skip if empty after cleaning
-            if not summary:
+            if not summary or summary in ["", "One sentence about what this contains"]:
                 summary = None
 
         # Bad tags to reject
