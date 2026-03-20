@@ -54,7 +54,7 @@ class OfflineTagGenerator:
                     "stream": False,
                     "format": "json",
                     "options": {
-                        "temperature": 0.3,
+                        "temperature": 0.1,
                         "num_predict": 200,
                     },
                 },
