@@ -222,7 +222,13 @@ Output only the JSON, nothing else."""
             r'\b(kubernetes|k8s)\b',
             r'\b(ci/cd|cicd)\b',
             r'\b(microservice)\b',
-            r'\b(jenkins)\b',
+            r'\b(cache|caching)\b',
+            r'\b(deploy|deployment)\b',
+            r'\b(queue|jobs)\b',
+            r'\b(lando)\b',
+            r'\b(minio)\b',
+            r'\b(frankenphp)\b',
+            r'\b(jira)\b',
         ]
 
         content_lower = full_content.lower()
