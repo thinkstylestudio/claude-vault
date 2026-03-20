@@ -87,35 +87,42 @@ class OfflineTagGenerator:
 
     def _conversation_prompt(self, title: str, content: str) -> str:
         """Prompt for conversation-style content"""
-        return f"""Analyze this conversation and output JSON with relevant tags and a summary.
+        return f"""Look at this conversation. Generate tags from the ACTUAL topics discussed.
 
 Title: {title}
-Content: {content[:800]}
+Content:
+{content[:800]}
 
-RULES:
-- Output valid JSON only: {{"tags": ["tag1", "tag2"], "summary": "Brief summary"}}
-- Tags: 3-5 specific lowercase tags about the TOPICS discussed
-- Focus on: programming languages, frameworks, tools, concepts, problems solved
-- Do NOT use meta-tags like "conversation-analysis" or "natural-language-processing"
-- Summary: 1-2 sentences about what was discussed or solved
+Output JSON:
+{{"tags": ["tag1", "tag2"], "summary": "What was discussed"}}
 
-Example: {{"tags": ["python", "flask", "authentication", "jwt"], "summary": "Discussion about implementing JWT authentication in a Flask API."}}"""
+Rules:
+- Tags MUST come from actual content - what languages, tools, problems are mentioned?
+- 3-5 tags, lowercase, hyphenated if needed
+- Summary: what did this conversation cover?
+
+Output only the JSON, nothing else."""
 
     def _note_prompt(self, title: str, content: str) -> str:
         """Prompt for regular markdown notes"""
-        return f"""Analyze this note and output JSON with relevant tags and a summary.
+        return f"""Look at this note. Generate tags from the ACTUAL content.
 
 Title: {title}
-Content: {content[:800]}
+Content:
+{content[:800]}
 
-RULES:
-- Output valid JSON only: {{"tags": ["tag1", "tag2"], "summary": "Brief summary"}}
-- Tags: 3-5 specific lowercase tags about the ACTUAL CONTENT topics
-- Look for: existing hashtags (#job #sales), technologies (React, Laravel), activities
-- Do NOT use generic tags like "notes", "markdown", "general", "conversation-analysis"
-- Summary: 1-2 sentences about what this note contains
+Output JSON:
+{{"tags": ["tag1", "tag2"], "summary": "What this note contains"}}
 
-Example: {{"tags": ["react", "performance", "job-search", "spanish", "sales"], "summary": "Job listings for React roles, Spanish vocabulary notes, and sales tips."}}"""
+Rules:
+- Extract tags from what's ACTUALLY in the note - projects, tech, topics, hashtags
+- If there are #hashtags in the content, include them as tags
+- If specific tech is mentioned (React, Laravel, WordPress), tag it
+- If it's about a project, tag with project name
+- 3-5 tags, lowercase
+- Summary: what does this note actually contain?
+
+Output only the JSON, nothing else."""
 
     def _validate_metadata(self, data: dict) -> dict:
         """Validate and clean metadata"""
@@ -171,48 +178,77 @@ Example: {{"tags": ["react", "performance", "job-search", "spanish", "sales"], "
         return {"tags": self._fallback_tags(conversation), "summary": None}
 
     def _fallback_tags(self, conversation: Conversation) -> List[str]:
-        """Simple keyword extraction as fallback when LLM unavailable"""
-        keywords = {
-            "python": ["python", "py", "django", "flask", "pip"],
-            "javascript": ["javascript", "js", "react", "node", "npm", "typescript"],
-            "api": ["api", "rest", "graphql", "endpoint"],
-            "debugging": ["debug", "error", "bug", "fix", "issue"],
-            "code": ["code", "coding", "programming", "development"],
-            "tutorial": ["tutorial", "learn", "guide", "how-to"],
-            "export": ["export", "download", "backup"],
-            "design": ["design", "ui", "ux", "interface"],
-            "research": ["research", "study", "analysis"],
-            "data": ["data", "database", "sql", "analytics"],
-            "web": ["web", "website", "html", "css"],
-            "machine-learning": ["ml", "machine learning", "ai", "model"],
-            "testing": ["test", "testing", "qa", "unit test"],
-            "laravel": ["laravel", "eloquent", "artisan"],
-            "wordpress": ["wordpress", "wp", "woocommerce"],
-            "react": ["react", "jsx", "component", "hooks"],
-            "vue": ["vue", "vuex", "nuxt"],
-            "docker": ["docker", "container", "dockerfile"],
-            "git": ["git", "github", "commit", "branch"],
-            "sales": ["sales", "selling", "leads", "prospects"],
-            "habits": ["habit", "routine", "daily", "morning"],
-            "spanish": ["spanish", "español", "adiós", "dios"],
-            "job": ["job", "career", "hiring", "interview", "resume", "#job"],
-            "links": ["http", "youtube", "link", "url"],
-            "wordpress-dev": ["wordpress", "wp-", "plugin", "theme"],
-        }
-
-        if self.config.custom_keywords:
-            keywords.update(self.config.custom_keywords)
-
-        title_lower = conversation.title.lower()
-        content_lower = ""
-        for msg in conversation.messages:
-            content_lower += msg.content[:500].lower() + " "
-
-        combined = f"{title_lower} {content_lower}"
+        """Extract tags from actual content - hashtags, tech terms, project names"""
+        import re
 
         tags = []
-        for tag, patterns in keywords.items():
-            if any(pattern in combined for pattern in patterns):
+
+        # Get full content
+        full_content = conversation.title + " "
+        for msg in conversation.messages:
+            full_content += msg.content + " "
+
+        # Extract existing hashtags from content (#work_log, #job, etc)
+        hashtags = re.findall(r'#(\w+)', full_content)
+        for tag in hashtags:
+            tag = tag.lower().strip()
+            if 2 <= len(tag) <= 30 and tag not in tags:
                 tags.append(tag)
 
-        return tags[:5] if tags else ["notes"]
+        # Extract tech/framework mentions from content
+        tech_patterns = [
+            r'\b(react|reactjs)\b',
+            r'\b(laravel)\b',
+            r'\b(wordpress|wp)\b',
+            r'\b(python)\b',
+            r'\b(javascript|js)\b',
+            r'\b(typescript|ts)\b',
+            r'\b(docker)\b',
+            r'\b(vue|vuejs)\b',
+            r'\b(node|nodejs)\b',
+            r'\b(sql|mysql|postgres)\b',
+            r'\b(api|rest|graphql)\b',
+            r'\b(git|github)\b',
+            r'\b(php)\b',
+            r'\b(symfony)\b',
+            r'\b(oauth)\b',
+            r'\b(aws)\b',
+            r'\b(golang|go)\b',
+            r'\b(ruby|rails)\b',
+            r'\b(jenkins)\b',
+            r'\b(nginx)\b',
+            r'\b(redis)\b',
+            r'\b(mongodb)\b',
+            r'\b(kubernetes|k8s)\b',
+            r'\b(ci/cd|cicd)\b',
+            r'\b(microservice)\b',
+            r'\b(jenkins)\b',
+        ]
+
+        content_lower = full_content.lower()
+        for pattern in tech_patterns:
+            matches = re.findall(pattern, content_lower)
+            for match in matches:
+                tag = match.lower().strip()
+                if tag not in tags:
+                    tags.append(tag)
+
+        # Extract project/company names (look for patterns like "At CompanyName" or "### CompanyName")
+        company_pattern = r'(?:at|for|#)\s*([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*)'
+        companies = re.findall(company_pattern, full_content)
+        for company in companies[:2]:
+            tag = company.lower().replace(' ', '-')
+            if tag not in tags and len(tag) <= 20:
+                tags.append(tag)
+
+        # If still no tags, use significant words from title
+        if not tags:
+            title_words = conversation.title.lower().split()
+            # Filter out common words
+            skip = {"the", "a", "an", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had", "do", "does", "did", "will", "would", "could", "should", "may", "might", "can", "shall"}
+            for word in title_words:
+                word = word.strip(".,!?;:")
+                if word not in skip and len(word) > 2:
+                    tags.append(word)
+
+        return tags[:5]

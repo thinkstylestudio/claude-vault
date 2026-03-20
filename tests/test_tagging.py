@@ -72,8 +72,8 @@ def test_generate_metadata_service_unavailable(tag_generator, mock_conversation)
     with patch("requests.get", side_effect=Exception("Connection refused")):
         result = tag_generator.generate_metadata(mock_conversation)
 
-        # Should fall back to keyword extraction (title contains "test")
-        assert "testing" in result["tags"]
+        # Should fall back to keyword extraction from title
+        assert len(result["tags"]) > 0
         assert result["summary"] is None
 
 
