@@ -49,7 +49,7 @@ Claude Vault uses a modular architecture to handle different conversation format
 
 ```bash
 # Clone or download the project
-git clone https://github.com/MarioPadilla/claude-vault.git
+git clone https://github.com/thinkstylestudio/claude-vault.git
 cd claude-vault
 
 # Create virtual environment
@@ -109,12 +109,13 @@ claude-vault sync ~/Downloads/conversations.json
 
 ## Supported Formats
 
-Claude Vault supports multiple Claude conversation sources:
+Claude Vault supports multiple conversation sources:
 
 - **Claude Web Conversations** (.json) - From claude.ai exports
 - **Claude Code History** (.jsonl) - From Claude Code IDE integration
+- **OpenCode** (.db) - From OpenCode SQLite database
 
-Both formats are automatically detected based on file extension, or you can specify with `--source`:
+All formats are automatically detected based on file extension, or you can specify with `--source`:
 
 ```bash
 # Auto-detect format
@@ -126,6 +127,11 @@ claude-vault sync ~/.claude
 # Explicit source
 claude-vault sync export.json --source web
 claude-vault sync export.jsonl --source code
+
+# OpenCode (auto-detects opencode.db)
+claude-vault sync ~/.local/share/opencode/opencode.db
+# Or use default path with --source
+claude-vault sync --source opencode
 ```
 
 ### 4. Check Status
@@ -376,7 +382,7 @@ claude-vault init ~/Documents/my-vault
 
 #### `sync`
 
-Sync Claude conversations to markdown files.
+Sync conversations to markdown files.
 
 ```bash
 claude-vault sync [EXPORT_PATH]
@@ -384,7 +390,17 @@ claude-vault sync [EXPORT_PATH]
 
 **Examples:**
 ```bash
+# Claude web export
 claude-vault sync ~/Downloads/conversations.json
+
+# Claude Code history
+claude-vault sync ~/.claude
+
+# OpenCode (auto-detects .db)
+claude-vault sync ~/.local/share/opencode/opencode.db
+
+# OpenCode (uses default path)
+claude-vault sync --source opencode
 ```
 
 #### `status`
