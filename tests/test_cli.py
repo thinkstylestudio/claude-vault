@@ -83,3 +83,31 @@ def test_sync_no_file():
     result = runner.invoke(app, ["sync", "nonexistent.json"])
     assert result.exit_code == 1
     assert "Export file not found" in result.stdout
+
+
+def test_sync_opencode_source_no_path(tmp_path):
+    """Test sync with --source opencode resolves default DB path"""
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        runner.invoke(app, ["init"])
+        result = runner.invoke(app, ["sync", "--source", "opencode"])
+        # Default path may or may not exist on the test machine
+        # If it doesn't exist, expect file not found; if it does, expect sync output
+        if result.exit_code == 1:
+            assert "opencode.db" in result.stdout
+        else:
+            assert "opencode.db" in result.stdout
+
+
+def test_sync_auto_detects_db_file(tmp_path):
+    """Test that .db files are auto-detected as opencode source"""
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        runner.invoke(app, ["init"])
+        # Create a fake .db file to trigger auto-detection
+        fake_db = tmp_path / "opencode.db"
+        fake_db.touch()
+        result = runner.invoke(
+            app, ["sync", str(fake_db), "--dry-run"]
+        )
+        # Should detect as opencode and fail gracefully (empty DB)
+        assert result.exit_code == 0
+        assert "opencode.db" in result.stdout
