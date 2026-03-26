@@ -3,6 +3,7 @@ import sqlite3
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
+from urllib.parse import quote
 
 from .models import Conversation, Message
 
@@ -26,14 +27,18 @@ class OpenCodeParser:
             raise FileNotFoundError(f"OpenCode database not found: {db_path}")
 
         conversations = []
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        conn = sqlite3.connect(f"file:{quote(str(db_path))}?mode=ro", uri=True)
         conn.row_factory = sqlite3.Row
 
         try:
             # Get root sessions only (skip child/sub-sessions)
-            sessions = conn.execute(
-                "SELECT * FROM session WHERE parent_id IS NULL ORDER BY time_created"
-            ).fetchall()
+            try:
+                sessions = conn.execute(
+                    "SELECT * FROM session WHERE parent_id IS NULL ORDER BY time_created"
+                ).fetchall()
+            except (sqlite3.OperationalError, sqlite3.DatabaseError) as e:
+                print(f"Warning: Could not read sessions from {db_path}: {e}")
+                return conversations
 
             for session in sessions:
                 try:
@@ -162,17 +167,16 @@ class OpenCodeParser:
             lines = [f"**[Tool: {tool_name}]**"]
             if tool_input:
                 try:
-                    lines.append(f"```json\n{json.dumps(tool_input, indent=2)}\n```")
+                    safe_input = json.dumps(tool_input, indent=2).replace("```", "~~~")
+                    lines.append(f"```json\n{safe_input}\n```")
                 except (TypeError, ValueError):
-                    lines.append(f"```\n{tool_input}\n```")
+                    lines.append(f"```\n{str(tool_input).replace('```', '~~~')}\n```")
             if tool_output:
                 # Truncate long outputs
                 output_preview = (
-                    tool_output[:500] + "..."
-                    if len(tool_output) > 500
-                    else tool_output
+                    tool_output[:500] + "..." if len(tool_output) > 500 else tool_output
                 )
-                lines.append(f"```\n{output_preview}\n```")
+                lines.append(f"```\n{output_preview.replace('```', '~~~')}\n```")
             return "\n".join(lines)
 
         if part_type == "reasoning":
@@ -181,7 +185,7 @@ class OpenCodeParser:
                 text = text.decode("utf-8", errors="replace")
             text = text.strip()
             if text:
-                return f"**[Reasoning]**\n\n{text}"
+                return f"**[Reasoning]**\n\n{text.replace('```', '~~~')}"
             return None
 
         # Skip other part types (step-start, step-finish, patch, file, etc.)
