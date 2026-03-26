@@ -8,8 +8,12 @@ from .code_parser import ClaudeCodeHistoryParser
 from .markdown import MarkdownGenerator
 from .models import Conversation
 from .parser import ClaudeExportParser
+from .pii import PIIDetector
 from .state import StateManager
 from .tagging import OfflineTagGenerator
+
+# Risk level ordering used to compare thresholds
+_RISK_ORDER = {"none": 0, "low": 1, "medium": 2, "high": 3}
 
 
 class SyncEngine:
@@ -25,12 +29,16 @@ class SyncEngine:
         self.conversations_dir = vault_path / "conversations"
         self.conversations_dir.mkdir(exist_ok=True)
         self.tag_generator = OfflineTagGenerator()
+        self.pii_detector = PIIDetector()
 
     def sync(
         self,
         export_path: Path,
         dry_run: bool = False,
         progress_callback: Optional[Callable[[str, int, int], None]] = None,
+        detect_pii: bool = False,
+        redact_pii: bool = False,
+        skip_sensitive: bool = False,
     ) -> Dict[str, Any]:
         """
         Sync conversations from Claude export to markdown files
@@ -39,6 +47,9 @@ class SyncEngine:
             export_path: Path to conversations.json export
             dry_run: If True, only simulate changes without writing files
             progress_callback: Optional callback(description, current, total) for progress
+            detect_pii: Scan conversations for PII and sensitive content
+            redact_pii: Replace detected PII with [REDACTED-TYPE] placeholders
+            skip_sensitive: Skip conversations whose risk level meets the threshold
 
         Returns:
             Dictionary with sync statistics and details
@@ -48,6 +59,7 @@ class SyncEngine:
             "updated": 0,
             "unchanged": 0,
             "recreated": 0,
+            "skipped": 0,
             "errors": 0,
             "details": [],
         }
@@ -82,6 +94,51 @@ class SyncEngine:
                         metadata = self.tag_generator.generate_metadata(conv)
                         conv.tags = metadata["tags"]
                         conv.summary = metadata["summary"]
+
+                    # PII / sensitive content detection
+                    if detect_pii or redact_pii or skip_sensitive:
+                        pii_config = self.pii_detector.config.pii
+                        use_llm = pii_config.use_llm
+                        pii_result = self.pii_detector.analyze(conv, use_llm=use_llm)
+
+                        conv.pii_detected = pii_result.detected
+                        conv.risk_level = pii_result.risk_level
+                        conv.pii_types = pii_result.pii_types
+
+                        # Apply PII tags to conversation
+                        if pii_result.detected:
+                            threshold = pii_config.risk_threshold
+                            if _RISK_ORDER.get(
+                                pii_result.risk_level, 0
+                            ) >= _RISK_ORDER.get(threshold, 2):
+                                if "sensitive" not in conv.tags:
+                                    conv.tags.append("sensitive")
+                            for pii_type in pii_result.pii_types:
+                                tag = f"pii-{pii_type.replace('_', '-')}"
+                                if tag not in conv.tags:
+                                    conv.tags.append(tag)
+
+                        # Skip sensitive conversations if requested
+                        if skip_sensitive and pii_result.detected:
+                            threshold = pii_config.risk_threshold
+                            if _RISK_ORDER.get(
+                                pii_result.risk_level, 0
+                            ) >= _RISK_ORDER.get(threshold, 2):
+                                results["skipped"] += 1
+                                results["details"].append(
+                                    {
+                                        "action": "skipped",
+                                        "title": conv.title,
+                                        "risk_level": pii_result.risk_level,
+                                        "pii_types": pii_result.pii_types,
+                                    }
+                                )
+                                continue
+
+                        # Redact PII from message content if requested
+                        if redact_pii and pii_result.detected:
+                            for msg in conv.messages:
+                                msg.content = self.pii_detector.redact(msg.content)
 
                     # Find related conversations based on tags [3]
                     related_convs = self._find_related_by_tags(conv, conversations)

@@ -35,10 +35,26 @@ class EmbeddingConfig(BaseModel):
     url: str = "http://localhost:11434/api/embed"
 
 
+class PIIConfig(BaseModel):
+    """Configuration for PII and sensitive-content detection"""
+
+    # Whether to run detection at all (also enabled per-command via --detect-pii)
+    enabled: bool = False
+    # Automatically redact detected PII before writing markdown
+    redact: bool = False
+    # Skip syncing conversations whose risk level meets or exceeds risk_threshold
+    skip_sensitive: bool = False
+    # Use Ollama LLM classification in addition to regex (requires Ollama running)
+    use_llm: bool = True
+    # Minimum risk level that triggers the "sensitive" tag: "low" | "medium" | "high"
+    risk_threshold: str = "medium"
+
+
 class Config(BaseModel):
     ollama: OllamaConfig = Field(default_factory=OllamaConfig)
     watch: WatchConfig = Field(default_factory=WatchConfig)
     embeddings: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
+    pii: PIIConfig = Field(default_factory=PIIConfig)
 
     # Custom fallback keywords if user wants to override defaults
     # Mapping of "tag" -> ["keyword1", "keyword2"]

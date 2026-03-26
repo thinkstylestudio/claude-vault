@@ -82,6 +82,11 @@ uuid: {uuid}
             ]
             post["related_tags"] = {r["title"]: r["common_tags"] for r in related_convs}
 
+        if conversation.pii_detected:
+            post["pii_detected"] = True
+            post["risk_level"] = conversation.risk_level
+            post["pii_types"] = conversation.pii_types
+
         return str(frontmatter.dumps(post))
 
     def save(

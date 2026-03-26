@@ -91,6 +91,21 @@ def sync(
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Preview changes without applying them"
     ),
+    detect_pii: bool = typer.Option(
+        False,
+        "--detect-pii",
+        help="Scan conversations for PII and sensitive content (regex + optional Ollama LLM)",
+    ),
+    redact_pii: bool = typer.Option(
+        False,
+        "--redact-pii",
+        help="Replace detected PII with [REDACTED-TYPE] placeholders before writing",
+    ),
+    skip_sensitive: bool = typer.Option(
+        False,
+        "--skip-sensitive",
+        help="Skip syncing conversations flagged as sensitive (medium risk or higher)",
+    ),
 ):
     """Sync Claude conversations to markdown files"""
 
@@ -133,6 +148,16 @@ def sync(
     engine = SyncEngine(vault_path)
     engine.parser = parser
 
+    # PII detection notices
+    if detect_pii or redact_pii or skip_sensitive:
+        console.print("[blue]🔒 PII detection enabled[/blue]")
+        if redact_pii:
+            console.print("[dim]  • PII will be redacted in stored files[/dim]")
+        if skip_sensitive:
+            console.print(
+                "[dim]  • Conversations with medium/high risk will be skipped[/dim]"
+            )
+
     from rich.progress import BarColumn, MofNCompleteColumn, TimeRemainingColumn
 
     with Progress(
@@ -151,7 +176,12 @@ def sync(
             )
 
         result = engine.sync(
-            export_path, dry_run=dry_run, progress_callback=update_progress
+            export_path,
+            dry_run=dry_run,
+            progress_callback=update_progress,
+            detect_pii=detect_pii,
+            redact_pii=redact_pii,
+            skip_sensitive=skip_sensitive,
         )
 
     # Display results
@@ -170,6 +200,8 @@ def sync(
     table.add_row("Updated", f"[yellow]{result['updated']}[/yellow]")
     table.add_row("Recreated", f"[yellow]{result['recreated']}[/yellow]")
     table.add_row("Unchanged", f"[dim]{result['unchanged']}[/dim]")
+    if result.get("skipped", 0) > 0:
+        table.add_row("Skipped (sensitive)", f"[magenta]{result['skipped']}[/magenta]")
     if result["errors"] > 0:
         table.add_row("Errors", f"[red]{result['errors']}[/red]")
 
@@ -189,6 +221,7 @@ def sync(
                 "new": "green",
                 "updated": "yellow",
                 "recreated": "yellow",
+                "skipped": "magenta",
                 "error": "red",
             }.get(action, "white")
 

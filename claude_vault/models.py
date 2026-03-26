@@ -25,6 +25,10 @@ class Conversation(BaseModel):
     updated_at: datetime
     tags: List[str] = Field(default_factory=list)
     summary: Optional[str] = None
+    # PII / sensitive-content metadata (populated during sync when --detect-pii is used)
+    pii_detected: bool = False
+    risk_level: Optional[str] = None  # "none" | "low" | "medium" | "high"
+    pii_types: List[str] = Field(default_factory=list)
 
     def content_hash(self) -> str:
         """Generate SHA-256 hash of conversation content for change detection"""
