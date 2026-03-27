@@ -26,7 +26,7 @@ class OpenCodeParser:
         if not db_path.exists():
             raise FileNotFoundError(f"OpenCode database not found: {db_path}")
 
-        conversations = []
+        conversations: List[Conversation] = []
         conn = sqlite3.connect(f"file:{quote(str(db_path))}?mode=ro", uri=True)
         conn.row_factory = sqlite3.Row
 
